@@ -52,7 +52,6 @@ services:
 networks:
   traccar-private:
     driver: bridge
-    internal: true
 
 volumes:
   traccar-db-data:
