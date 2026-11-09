@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE properties SYSTEM "http://java.sun.com/dtd/properties.dtd">
+<properties>
+    <!-- Emit real online/offline/unknown device status events for the backend bridge. -->
+    <entry key='event.status.enable'>true</entry>
+</properties>
