@@ -7,6 +7,8 @@ import com.example.data.local.DeviceProfileEntity
 import com.example.data.local.SubscriptionEntity
 import com.example.data.local.SubscriptionHistoryEntity
 import com.example.data.local.UserProfileEntity
+import kotlin.math.min
+import kotlin.math.pow
 
 enum class UserRole(val shortLabel: String) {
     ADMIN("ADMIN"),
@@ -16,27 +18,26 @@ enum class UserRole(val shortLabel: String) {
 enum class ActivationStatus(val shortLabel: String, val stepIndex: Int) {
     PENDING("PENDING", 1),
     SMS_SENT("SMS SENT", 2),
-    WAITING_FOR_DEVICE("WAITING FOR DEVICE", 3),
+    WAITING_FOR_DEVICE("WAITING", 3),
     ACTIVATED("ACTIVATED", 4),
     FAILED("FAILED", 4)
 }
 
 enum class DeviceConnectionState(val shortLabel: String) {
-    ONLINE_GPS_FIX("ONLINE • GPS FIX"),
-    ONLINE_NO_FIX("ONLINE • NO GPS FIX"),
+    ONLINE_GPS_FIX("ONLINE"),
+    ONLINE_NO_FIX("NO FIX"),
     OFFLINE("OFFLINE")
 }
 
 enum class PlanDuration(
     val shortLabel: String,
-    val fullLabel: String,
     val durationDays: Int?
 ) {
-    MONTH_1("1M", "1 Month", 30),
-    MONTH_3("3M", "3 Months", 90),
-    MONTH_6("6M", "6 Months", 180),
-    MONTH_12("12M", "12 Months", 365),
-    LIFETIME("Lifetime", "Lifetime", null);
+    MONTH_1("1M", 30),
+    MONTH_3("3M", 90),
+    MONTH_6("6M", 180),
+    MONTH_12("12M", 365),
+    LIFETIME("Lifetime", null);
 
     fun computeExpiryMillis(startMillis: Long): Long? {
         val days = durationDays ?: return null
@@ -45,24 +46,15 @@ enum class PlanDuration(
 }
 
 enum class SubscriptionStatus(val shortLabel: String) {
-    AWAITING_FIRST_CONNECTION("AWAITING 1ST CONNECTION"),
+    AWAITING_FIRST_CONNECTION("WAITING"),
     ACTIVE("ACTIVE"),
     EXPIRED("EXPIRED"),
     SUSPENDED("SUSPENDED")
 }
 
-enum class ServerConfigMode(val code: Int, val shortLabel: String) {
-    DOMAIN(1, "DNS"),
-    IP(0, "IP")
-}
-
-enum class TransportProtocol(val gt06Code: Int, val shortLabel: String) {
-    TCP(0, "TCP"),
-    UDP(1, "UDP")
-}
-
 enum class SmsStepStatus(val shortLabel: String) {
     QUEUED("QUEUED"),
+    ACCEPTED("ACCEPTED"),
     SENT("SENT"),
     DELIVERED("DELIVERED"),
     REPLIED("REPLIED"),
@@ -70,44 +62,58 @@ enum class SmsStepStatus(val shortLabel: String) {
     TIMED_OUT("TIMEOUT")
 }
 
+enum class BackendConnectionState(val shortLabel: String) {
+    DISCONNECTED("DISCONNECTED"),
+    CONNECTING("CONNECTING"),
+    CONNECTED("CONNECTED"),
+    RECONNECTING("RECONNECTING"),
+    UNAUTHORIZED("UNAUTHORIZED")
+}
+
+data class AuthenticatedSession(
+    val token: String,
+    val userId: String,
+    val email: String,
+    val fullName: String,
+    val role: UserRole
+)
+
 data class DeviceAggregate(
     val device: DeviceEntity,
-    val profile: DeviceProfileEntity,
-    val customer: UserProfileEntity,
+    val profile: DeviceProfileEntity?,
+    val customer: UserProfileEntity?,
     val subscription: SubscriptionEntity,
     val smsLogs: List<ActivationSmsLogEntity>,
     val subscriptionHistory: List<SubscriptionHistoryEntity>,
     val ownershipHistory: List<DeviceOwnershipHistoryEntity>
 ) {
-    fun isSubscriptionAccessible(nowMillis: Long = System.currentTimeMillis()): Boolean {
+    fun isSubscriptionAccessible(serverNowMillis: Long = System.currentTimeMillis()): Boolean {
         if (subscription.status != SubscriptionStatus.ACTIVE.name) return false
         if (subscription.planDuration == PlanDuration.LIFETIME.name) return true
         val expiry = subscription.expiresAt ?: return false
-        return expiry > nowMillis
+        return expiry > serverNowMillis
     }
 
-    fun remainingDaysText(nowMillis: Long = System.currentTimeMillis()): String {
+    fun compactSubscriptionBadge(serverNowMillis: Long = System.currentTimeMillis()): String {
+        val planLabel = runCatching { PlanDuration.valueOf(subscription.planDuration).shortLabel }
+            .getOrDefault(subscription.planDuration)
         if (subscription.status == SubscriptionStatus.AWAITING_FIRST_CONNECTION.name) {
-            return "Starts on 1st connection (${PlanDuration.valueOf(subscription.planDuration).shortLabel})"
+            return "$planLabel • WAITING"
         }
         if (subscription.status == SubscriptionStatus.SUSPENDED.name) {
-            return "Suspended"
+            return "SUSPENDED"
         }
-        if (subscription.planDuration == PlanDuration.LIFETIME.name && subscription.status == SubscriptionStatus.ACTIVE.name) {
-            return "Lifetime • Active"
+        if (subscription.status == SubscriptionStatus.EXPIRED.name) {
+            return "EXPIRED"
         }
-        val expiry = subscription.expiresAt ?: return "Expired"
-        val diffMs = expiry - nowMillis
-        if (diffMs <= 0L) return "Expired"
-        val seconds = diffMs / 1000L
-        if (seconds < 120L) return "Expires in ${seconds}s"
-        val days = diffMs / (24L * 60L * 60L * 1000L)
-        return if (days == 0L) {
-            val hours = (diffMs / (60L * 60L * 1000L)).coerceAtLeast(1L)
-            "${hours}h left"
-        } else {
-            "${days}d left"
+        if (subscription.planDuration == PlanDuration.LIFETIME.name) {
+            return "LIFETIME"
         }
+        val expiry = subscription.expiresAt ?: return "EXPIRED"
+        val diffMs = expiry - serverNowMillis
+        if (diffMs <= 0L) return "EXPIRED"
+        val days = (diffMs / 86_400_000L).coerceAtLeast(1L)
+        return "$planLabel • ${days}d"
     }
 }
 
@@ -119,22 +125,17 @@ data class NormalizedEgyptianSim(
 )
 
 object SimAndImeiValidator {
-    /**
-     * Validates an Egyptian SIM number entered WITHOUT the +20 country code.
-     * Valid inputs: 010XXXXXXXX, 011XXXXXXXX, 012XXXXXXXX, 015XXXXXXXX (11 digits)
-     * or 10XXXXXXXX, 11XXXXXXXX, 12XXXXXXXX, 15XXXXXXXX (10 digits).
-     */
     fun normalizeEgyptianSim(rawInput: String): NormalizedEgyptianSim {
         val trimmed = rawInput.trim().replace(" ", "").replace("-", "")
         if (trimmed.isEmpty()) {
-            return NormalizedEgyptianSim(false, "", "", "Enter SIM number without +20")
+            return NormalizedEgyptianSim(false, "", "", "SIM required")
         }
         if (trimmed.startsWith("+20") || trimmed.startsWith("0020")) {
             return NormalizedEgyptianSim(
                 isValid = false,
                 localNumber = trimmed,
                 e164Number = "",
-                errorReason = "Enter local number without +20 (e.g. 01012345678)"
+                errorReason = "Omit +20"
             )
         }
         if (!trimmed.all { it.isDigit() }) {
@@ -147,7 +148,7 @@ object SimAndImeiValidator {
                 isValid = false,
                 localNumber = trimmed,
                 e164Number = "",
-                errorReason = "Must be 10 or 11 digits (010/011/012/015...)"
+                errorReason = "10 or 11 digits"
             )
         }
         val validPrefix = normalizedTen.startsWith("10") ||
@@ -159,7 +160,7 @@ object SimAndImeiValidator {
                 isValid = false,
                 localNumber = "0$normalizedTen",
                 e164Number = "",
-                errorReason = "Prefix must be 010, 011, 012, or 015"
+                errorReason = "Invalid prefix"
             )
         }
         return NormalizedEgyptianSim(
@@ -170,9 +171,6 @@ object SimAndImeiValidator {
         )
     }
 
-    /**
-     * Validates a 15-digit GPS tracker IMEI with Luhn check.
-     */
     fun isValidImei(imei: String): Boolean {
         val clean = imei.trim()
         if (clean.length != 15 || !clean.all { it.isDigit() }) return false
@@ -191,12 +189,15 @@ object SimAndImeiValidator {
         }
         return (10 - (sum % 10)) % 10
     }
+}
 
-    fun generateValidGt06nImei(seed: Long = System.nanoTime()): String {
-        val tac = "35873905" // Concox GT06N TAC prefix
-        val serial = ((seed.coerceAtLeast(0L) % 900000L) + 100000L).toString().take(6)
-        val first14 = tac + serial
-        val check = computeLuhnCheckDigit(first14)
-        return "$first14$check"
+object ReconnectPolicy {
+    private const val BASE_DELAY_MS = 1_000L
+    private const val MAX_DELAY_MS = 30_000L
+
+    fun computeBackoffMillis(attempt: Int): Long {
+        val clampedAttempt = attempt.coerceIn(0, 6)
+        val raw = (BASE_DELAY_MS * 2.0.pow(clampedAttempt.toDouble())).toLong()
+        return min(MAX_DELAY_MS, raw)
     }
 }

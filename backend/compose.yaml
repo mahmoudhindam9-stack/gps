@@ -1,0 +1,54 @@
+name: velotrack-backend
+
+services:
+  velotrack-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: velotrack
+      POSTGRES_USER: velotrack
+      POSTGRES_PASSWORD: ${VELOTRACK_DB_PASSWORD:?Set VELOTRACK_DB_PASSWORD in backend/.env}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - velotrack-db-data:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U velotrack -d velotrack"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - velotrack-private
+
+  velotrack-api:
+    image: node:22-alpine
+    working_dir: /srv/velotrack-backend
+    restart: unless-stopped
+    depends_on:
+      velotrack-db:
+        condition: service_healthy
+    environment:
+      PORT: ${PORT:-3000}
+      VELOTRACK_DB_URL: ${VELOTRACK_DB_URL:?Set VELOTRACK_DB_URL in backend/.env}
+      VELOTRACK_JWT_SECRET: ${VELOTRACK_JWT_SECRET:?Set VELOTRACK_JWT_SECRET in backend/.env}
+      TRACCAR_BASE_URL: ${TRACCAR_BASE_URL:-http://host.docker.internal:8082}
+      TRACCAR_ADMIN_EMAIL: ${TRACCAR_ADMIN_EMAIL:?Set TRACCAR_ADMIN_EMAIL in backend/.env}
+      TRACCAR_ADMIN_PASSWORD: ${TRACCAR_ADMIN_PASSWORD:?Set TRACCAR_ADMIN_PASSWORD in backend/.env}
+      SMS_GATEWAY_URL: ${SMS_GATEWAY_URL:-}
+      SMS_GATEWAY_TOKEN: ${SMS_GATEWAY_TOKEN:-}
+      SMS_WEBHOOK_SECRET: ${SMS_WEBHOOK_SECRET:-}
+    command: ["node", "src/server.mjs"]
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./:/srv/velotrack-backend:ro
+    networks:
+      - velotrack-private
+
+networks:
+  velotrack-private:
+    driver: bridge
+
+volumes:
+  velotrack-db-data:

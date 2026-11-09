@@ -2,5 +2,7 @@
   "name": "VeloTrack GPS",
   "description": "Self-hosted GPS vehicle tracking platform with MapLibre PMTiles vector maps, APN-free Concox GT06N SMS server activation, 4-stage Traccar connection verification, and per-device subscription enforcement.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

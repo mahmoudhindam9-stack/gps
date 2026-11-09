@@ -22,16 +22,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material.icons.filled.GpsFixed
-import androidx.compose.material.icons.filled.GpsOff
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -82,9 +81,9 @@ fun LiveFleetMapScreen(
     onOpenRouteHistory: (String) -> Unit,
     onScrubRoute: (Int) -> Unit,
     onCloseRouteHistory: () -> Unit,
-    onSimulateTraccarPacket: (String, Boolean) -> Unit,
     onQuickRenew: (String, PlanDuration) -> Unit,
-    onTestFiveSecExpiry: (String) -> Unit,
+    onNavigateToActivate: () -> Unit,
+    onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val selectedAggregate = devices.find { it.device.id == selectedDeviceId } ?: devices.firstOrNull()
@@ -99,11 +98,10 @@ fun LiveFleetMapScreen(
             .fillMaxSize()
             .testTag("live_fleet_map_screen")
     ) {
-        // Top Map Canvas Area (52% height)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(0.52f)
+                .weight(0.55f)
         ) {
             VeloTrackMapLibreCanvas(
                 devices = devices,
@@ -114,7 +112,6 @@ fun LiveFleetMapScreen(
                 onSelectDevice = onSelectDevice
             )
 
-            // Floating Minimal Filter Bar
             Row(
                 modifier = Modifier
                     .align(Alignment.TopStart)
@@ -145,13 +142,12 @@ fun LiveFleetMapScreen(
             }
         }
 
-        // Bottom Telemetry HUD & Compact Fleet Sheet (48% height)
         Surface(
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 4.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(0.48f)
+                .weight(0.45f)
         ) {
             Column(
                 modifier = Modifier
@@ -166,40 +162,86 @@ fun LiveFleetMapScreen(
                         onOpenRouteHistory = { onOpenRouteHistory(selectedAggregate.device.id) },
                         onScrubRoute = onScrubRoute,
                         onCloseRouteHistory = onCloseRouteHistory,
-                        onSimulateTraccarPacket = { hasFix ->
-                            onSimulateTraccarPacket(selectedAggregate.device.id, hasFix)
-                        },
                         onQuickRenew = { plan ->
                             onQuickRenew(selectedAggregate.device.id, plan)
-                        },
-                        onTestFiveSecExpiry = {
-                            onTestFiveSecExpiry(selectedAggregate.device.id)
                         }
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                // Compact Fleet List
-                Text(
-                    text = "FLEET (${devices.size})",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
-                        .testTag("fleet_vehicle_list")
+                        .padding(bottom = 4.dp)
                 ) {
-                    items(devices, key = { it.device.id }) { agg ->
-                        CompactVehicleRow(
-                            aggregate = agg,
-                            isSelected = agg.device.id == selectedAggregate?.device?.id,
-                            onClick = { onSelectDevice(agg.device.id) }
+                    Text(
+                        text = "FLEET (${devices.size})",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    IconButton(
+                        onClick = onRefresh,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .testTag("fleet_refresh_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh",
+                            modifier = Modifier.size(16.dp)
                         )
+                    }
+                }
+
+                if (devices.isEmpty()) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .testTag("empty_fleet_container")
+                    ) {
+                        if (activeRole == UserRole.ADMIN) {
+                            OutlinedButton(
+                                onClick = onNavigateToActivate,
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("empty_state_activate_button")
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Activate")
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = onRefresh,
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("empty_state_refresh_button")
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Refresh")
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .testTag("fleet_vehicle_list")
+                    ) {
+                        items(devices, key = { it.device.id }) { agg ->
+                            CompactVehicleRow(
+                                aggregate = agg,
+                                isSelected = agg.device.id == selectedAggregate?.device?.id,
+                                onClick = { onSelectDevice(agg.device.id) }
+                            )
+                        }
                     }
                 }
             }
@@ -215,9 +257,7 @@ private fun SelectedVehicleHudCard(
     onOpenRouteHistory: () -> Unit,
     onScrubRoute: (Int) -> Unit,
     onCloseRouteHistory: () -> Unit,
-    onSimulateTraccarPacket: (Boolean) -> Unit,
-    onQuickRenew: (PlanDuration) -> Unit,
-    onTestFiveSecExpiry: () -> Unit
+    onQuickRenew: (PlanDuration) -> Unit
 ) {
     val dev = aggregate.device
     val now = System.currentTimeMillis()
@@ -228,7 +268,7 @@ private fun SelectedVehicleHudCard(
     val statusColor = when {
         isExpired -> StatusExpiredCrimson
         !isActivated -> StatusWaitingAmber
-        dev.ignitionOn -> StatusMovingEmerald
+        dev.ignitionOn == true -> StatusMovingEmerald
         else -> StatusOfflineSlate
     }
 
@@ -285,7 +325,7 @@ private fun SelectedVehicleHudCard(
                             )
                         }
                         Text(
-                            text = "IMEI ${dev.imei} • SIM ${dev.simLocalNumber}",
+                            text = "${dev.imei} • ${dev.simLocalNumber}",
                             fontFamily = JetBrainsMonoFontFamily,
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -294,14 +334,13 @@ private fun SelectedVehicleHudCard(
                 }
 
                 StatusPill(
-                    text = aggregate.remainingDaysText(now),
+                    text = aggregate.compactSubscriptionBadge(now),
                     color = statusColor
                 )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Case 1: Subscription Expired -> Block telemetry & show renewal action
             if (isExpired) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -320,12 +359,12 @@ private fun SelectedVehicleHudCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Lock,
-                            contentDescription = "Blocked",
+                            contentDescription = "EXPIRED",
                             tint = StatusExpiredCrimson,
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = "EXPIRED • Live WS & History Blocked",
+                            text = "EXPIRED",
                             style = MaterialTheme.typography.labelMedium,
                             color = StatusExpiredCrimson,
                             fontWeight = FontWeight.Bold
@@ -343,64 +382,31 @@ private fun SelectedVehicleHudCard(
                         }
                     }
                 }
-            }
-            // Case 2: Device Waiting for 1st Traccar Connection -> Show 4-Stage Status & Verification Trigger
-            else if (!isActivated) {
-                Column(
+            } else if (!isActivated) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(8.dp))
                         .background(StatusWaitingAmber.copy(alpha = 0.14f))
                         .padding(8.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = "STATE: ${dev.activationStatus} • Awaiting :5023 IMEI Packet",
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 10.sp,
-                            color = StatusWaitingAmber,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    if (activeRole == UserRole.ADMIN) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            OutlinedButton(
-                                onClick = { onSimulateTraccarPacket(false) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = 36.dp)
-                                    .testTag("hud_sim_no_gps_fix_button")
-                            ) {
-                                Icon(Icons.Default.GpsOff, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("1st Packet (No Fix)", fontSize = 10.sp)
-                            }
-                            Button(
-                                onClick = { onSimulateTraccarPacket(true) },
-                                colors = ButtonDefaults.buttonColors(containerColor = StatusMovingEmerald),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = 36.dp)
-                                    .testTag("hud_sim_gps_fix_button")
-                            ) {
-                                Icon(Icons.Default.GpsFixed, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("1st Packet (GPS Fix)", fontSize = 10.sp)
-                            }
-                        }
-                    }
+                    Text(
+                        text = dev.activationStatus,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 10.sp,
+                        color = StatusWaitingAmber,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = dev.connectionState,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-            }
-            // Case 3: Active & Accessible -> Show Telemetry Readout + Route History + 5s Expiry Test
-            else {
+            } else {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -408,17 +414,25 @@ private fun SelectedVehicleHudCard(
                 ) {
                     TelemetryStatItem(
                         label = "SPEED",
-                        value = "${dev.lastSpeedKmh.toInt()} km/h",
-                        color = if (dev.ignitionOn) StatusMovingEmerald else MaterialTheme.colorScheme.onSurface
+                        value = dev.lastSpeedKmh?.let { "${it.toInt()} km/h" } ?: "--",
+                        color = if (dev.ignitionOn == true) StatusMovingEmerald else MaterialTheme.colorScheme.onSurface
                     )
                     TelemetryStatItem(
                         label = "STATE",
-                        value = if (dev.connectionState.contains("NO_FIX")) "NO FIX (ONLINE)" else if (dev.ignitionOn) "ACC ON" else "PARKED",
+                        value = when {
+                            !dev.hasValidFix -> "NO FIX"
+                            dev.ignitionOn == true -> "ONLINE"
+                            else -> "OFFLINE"
+                        },
                         color = MaterialTheme.colorScheme.primary
                     )
                     TelemetryStatItem(
                         label = "COORDS",
-                        value = String.format(Locale.US, "%.4f, %.4f", dev.lastLat, dev.lastLng),
+                        value = if (dev.hasValidFix && dev.lastLat != null && dev.lastLng != null) {
+                            String.format(Locale.US, "%.4f, %.4f", dev.lastLat, dev.lastLng)
+                        } else {
+                            "--"
+                        },
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -433,12 +447,12 @@ private fun SelectedVehicleHudCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Scrub Route",
+                            contentDescription = "Route",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = "${wp.addressLabel} (${wp.speedKmh.toInt()} km/h)",
+                            text = String.format(Locale.US, "%.4f, %.4f • %d km/h", wp.latitude, wp.longitude, wp.speedKmh.toInt()),
                             fontFamily = JetBrainsMonoFontFamily,
                             fontSize = 10.sp,
                             modifier = Modifier
@@ -449,7 +463,7 @@ private fun SelectedVehicleHudCard(
                             onClick = onCloseRouteHistory,
                             modifier = Modifier.size(24.dp)
                         ) {
-                            Icon(Icons.Default.Close, contentDescription = "Close History", modifier = Modifier.size(14.dp))
+                            Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(14.dp))
                         }
                     }
                     Slider(
@@ -462,34 +476,16 @@ private fun SelectedVehicleHudCard(
                             .testTag("route_history_slider")
                     )
                 } else {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
+                    OutlinedButton(
+                        onClick = onOpenRouteHistory,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 38.dp)
+                            .testTag("hud_route_history_button")
                     ) {
-                        OutlinedButton(
-                            onClick = onOpenRouteHistory,
-                            modifier = Modifier
-                                .weight(1f)
-                                .heightIn(min = 38.dp)
-                                .testTag("hud_route_history_button")
-                        ) {
-                            Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Route History", fontSize = 11.sp)
-                        }
-                        if (activeRole == UserRole.ADMIN) {
-                            OutlinedButton(
-                                onClick = onTestFiveSecExpiry,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = 38.dp)
-                                    .testTag("hud_test_5s_expiry_button")
-                            ) {
-                                Icon(Icons.Default.Timer, contentDescription = null, tint = StatusWaitingAmber, modifier = Modifier.size(15.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Test 5s Expiry", fontSize = 11.sp)
-                            }
-                        }
+                        Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("History", fontSize = 11.sp)
                     }
                 }
             }
@@ -512,7 +508,7 @@ private fun CompactVehicleRow(
     val dotColor = when {
         isExpired -> StatusExpiredCrimson
         !isActivated -> StatusWaitingAmber
-        dev.ignitionOn -> StatusMovingEmerald
+        dev.ignitionOn == true -> StatusMovingEmerald
         else -> StatusOfflineSlate
     }
 
@@ -559,7 +555,7 @@ private fun CompactVehicleRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "${aggregate.customer.fullName.substringBefore("•").trim()} • IMEI ${dev.imei.takeLast(6)}",
+                    text = dev.imei,
                     fontFamily = JetBrainsMonoFontFamily,
                     fontSize = 10.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -567,17 +563,16 @@ private fun CompactVehicleRow(
             }
         }
 
-        Column(horizontalAlignment = Alignment.End) {
-            StatusPill(
-                text = when {
-                    isExpired -> "EXPIRED"
-                    !isActivated -> dev.activationStatus
-                    dev.ignitionOn -> "${dev.lastSpeedKmh.toInt()} km/h"
-                    else -> "PARKED"
-                },
-                color = dotColor
-            )
-        }
+        StatusPill(
+            text = when {
+                isExpired -> "EXPIRED"
+                !isActivated -> dev.activationStatus
+                dev.lastSpeedKmh != null && dev.ignitionOn == true -> "${dev.lastSpeedKmh.toInt()} km/h"
+                dev.hasValidFix -> "ONLINE"
+                else -> "NO FIX"
+            },
+            color = dotColor
+        )
     }
 }
 
