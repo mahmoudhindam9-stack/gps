@@ -114,6 +114,18 @@ interface VeloTrackDao {
         insertOwnershipHistoryList(ownHistory)
     }
 
+    @Query("DELETE FROM activation_sms_logs WHERE gatewayMessageId LIKE 'GSM-EG-%'")
+    suspend fun deleteDemoSmsLogs()
+
+    @Query("DELETE FROM users_profile WHERE email LIKE '%@velotrack.demo' OR email IN ('admin@velotrack.eg', 'customer@velotrack.eg')")
+    suspend fun deleteDemoUsers()
+
+    @Transaction
+    suspend fun purgeLegacyDemoCache() {
+        deleteDemoSmsLogs()
+        deleteDemoUsers()
+    }
+
     @Transaction
     suspend fun clearAllOfflineCache() {
         clearAllWaypoints()

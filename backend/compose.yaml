@@ -1,37 +1,27 @@
 name: velotrack-backend
 
 services:
-  velotrack-db:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: velotrack
-      POSTGRES_USER: velotrack
-      POSTGRES_PASSWORD: ${VELOTRACK_DB_PASSWORD:?Set VELOTRACK_DB_PASSWORD in backend/.env}
-    ports:
-      - "127.0.0.1:5433:5432"
-    volumes:
-      - velotrack-db-data:/var/lib/postgresql/data
-      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U velotrack -d velotrack"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    networks:
-      - velotrack-private
-
   velotrack-api:
     image: node:22-alpine
     working_dir: /srv/velotrack-backend
     restart: unless-stopped
-    depends_on:
-      velotrack-db:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
+      HOST: 0.0.0.0
       PORT: ${PORT:-3000}
-      VELOTRACK_DB_URL: ${VELOTRACK_DB_URL:?Set VELOTRACK_DB_URL in backend/.env}
-      VELOTRACK_JWT_SECRET: ${VELOTRACK_JWT_SECRET:?Set VELOTRACK_JWT_SECRET in backend/.env}
+      SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL in backend/.env}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:?Set SUPABASE_ANON_KEY in backend/.env}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?Set SUPABASE_SERVICE_ROLE_KEY in backend/.env}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:?Set SUPABASE_JWT_SECRET in backend/.env}
+      SUPABASE_DB_URL: ${SUPABASE_DB_URL:?Set SUPABASE_DB_URL in backend/.env}
+      SUPABASE_DB_SSL: ${SUPABASE_DB_SSL:-false}
+      VELOTRACK_INITIAL_ADMIN_EMAIL: ${VELOTRACK_INITIAL_ADMIN_EMAIL:-}
+      VELOTRACK_INITIAL_ADMIN_USERNAME: ${VELOTRACK_INITIAL_ADMIN_USERNAME:-admin}
+      VELOTRACK_INITIAL_ADMIN_PASSWORD: ${VELOTRACK_INITIAL_ADMIN_PASSWORD:-}
+      VELOTRACK_INITIAL_ADMIN_PHONE: ${VELOTRACK_INITIAL_ADMIN_PHONE:-+201000000000}
+      BACKEND_DEPLOYMENT_MODE: ${BACKEND_DEPLOYMENT_MODE:-vps_local}
+      TRACCAR_PRIVATE_TUNNEL_ENABLED: ${TRACCAR_PRIVATE_TUNNEL_ENABLED:-false}
       TRACCAR_BASE_URL: ${TRACCAR_BASE_URL:-http://host.docker.internal:8082}
       TRACCAR_ADMIN_EMAIL: ${TRACCAR_ADMIN_EMAIL:?Set TRACCAR_ADMIN_EMAIL in backend/.env}
       TRACCAR_ADMIN_PASSWORD: ${TRACCAR_ADMIN_PASSWORD:?Set TRACCAR_ADMIN_PASSWORD in backend/.env}
@@ -40,9 +30,30 @@ services:
       SMS_WEBHOOK_SECRET: ${SMS_WEBHOOK_SECRET:-}
     command: ["node", "src/server.mjs"]
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${PORT:-3000}:${PORT:-3000}"
     volumes:
       - ./:/srv/velotrack-backend:ro
+    networks:
+      - velotrack-private
+
+  velotrack-https-proxy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      - velotrack-api
+    ports:
+      - "80:80"
+      - "443:443"
+    command:
+      - caddy
+      - reverse-proxy
+      - --from
+      - ${VELOTRACK_API_DOMAIN:?Set VELOTRACK_API_DOMAIN in backend/.env}
+      - --to
+      - velotrack-api:${PORT:-3000}
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
     networks:
       - velotrack-private
 
@@ -51,4 +62,5 @@ networks:
     driver: bridge
 
 volumes:
-  velotrack-db-data:
+  caddy-data:
+  caddy-config:

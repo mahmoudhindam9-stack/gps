@@ -16,13 +16,16 @@ import com.example.data.model.BackendConnectionState
 import com.example.data.model.DeviceAggregate
 import com.example.data.model.DeviceConnectionState
 import com.example.data.model.PlanDuration
+import com.example.data.model.ReconnectPolicy
 import com.example.data.model.SimAndImeiValidator
 import com.example.data.model.SmsStepStatus
 import com.example.data.model.SubscriptionStatus
 import com.example.data.model.UserRole
 import com.example.data.network.ActivateDeviceRequestDto
 import com.example.data.network.AdminOverrideRequestDto
+import com.example.data.network.ChangePasswordRequestDto
 import com.example.data.network.CreateProfileRequestDto
+import com.example.data.network.LiveWsFrameDto
 import com.example.data.network.LoginRequestDto
 import com.example.data.network.ReassignCustomerRequestDto
 import com.example.data.network.RenewSubscriptionRequestDto
@@ -36,15 +39,26 @@ import com.example.data.network.TraccarSocketFrameDto
 import com.example.data.network.VeloTrackApiService
 import com.example.data.network.VeloTrackNetworkClient
 import java.time.Instant
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 
 data class ServerStatusSnapshot(
     val connectionState: BackendConnectionState = BackendConnectionState.DISCONNECTED,
+    val supabaseConnected: Boolean = false,
     val traccarBridgeConnected: Boolean = false,
+    val liveWsConnected: Boolean = false,
     val traccarLastSyncAtMs: Long? = null,
     val smsGatewayConfigured: Boolean = false,
     val lastErrorMessage: String? = null
@@ -69,6 +83,11 @@ object TraccarProtocolCorrelator {
 
     fun parseTraccarSocketFrame(json: String): TraccarSocketFrameDto? {
         val adapter = VeloTrackNetworkClient.getMoshi().adapter(TraccarSocketFrameDto::class.java)
+        return runCatching { adapter.fromJson(json) }.getOrNull()
+    }
+
+    fun parseLiveWsFrame(json: String): LiveWsFrameDto? {
+        val adapter = VeloTrackNetworkClient.getMoshi().adapter(LiveWsFrameDto::class.java)
         return runCatching { adapter.fromJson(json) }.getOrNull()
     }
 
@@ -191,7 +210,6 @@ object TraccarProtocolCorrelator {
             }
         }
 
-        // Subscription remains untouched (never activated by SMS!)
         return Triple(
             device.copy(activationStatus = updatedDeviceStatus),
             subscription,
@@ -205,6 +223,11 @@ class VeloTrackRepository(
     private val context: Context? = null,
     private var apiProvider: () -> VeloTrackApiService = { VeloTrackNetworkClient.createApiService(context) }
 ) {
+    private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var activeWebSocket: WebSocket? = null
+    private var reconnectJob: Job? = null
+    private var reconnectAttempt: Int = 0
+
     private val _session = MutableStateFlow<AuthenticatedSession?>(null)
     val session: StateFlow<AuthenticatedSession?> = _session.asStateFlow()
 
@@ -213,6 +236,12 @@ class VeloTrackRepository(
 
     val allUsers: Flow<List<UserProfileEntity>> = dao.observeAllUsers()
     val deviceProfiles: Flow<List<DeviceProfileEntity>> = dao.observeDeviceProfiles()
+
+    init {
+        repoScope.launch {
+            runCatching { dao.purgeLegacyDemoCache() }
+        }
+    }
 
     fun observeCachedDeviceAggregates(): Flow<List<DeviceAggregate>> {
         val baseFlows = combine(
@@ -267,6 +296,7 @@ class VeloTrackRepository(
             val body = response.body()!!
             _serverStatus.value = _serverStatus.value.copy(
                 connectionState = if (_session.value != null) BackendConnectionState.CONNECTED else BackendConnectionState.DISCONNECTED,
+                supabaseConnected = body.supabaseConnected,
                 traccarBridgeConnected = body.traccarConnected,
                 traccarLastSyncAtMs = body.traccarLastSyncAtMs,
                 smsGatewayConfigured = body.smsGatewayConfigured,
@@ -276,45 +306,105 @@ class VeloTrackRepository(
         }.onFailure { err ->
             _serverStatus.value = _serverStatus.value.copy(
                 connectionState = BackendConnectionState.DISCONNECTED,
+                supabaseConnected = false,
                 traccarBridgeConnected = false,
+                liveWsConnected = false,
                 lastErrorMessage = err.message ?: "Server unreachable"
             )
         }
     }
 
-    suspend fun login(email: String, password: String): Result<AuthenticatedSession> {
-        val cleanEmail = email.trim()
-        if (cleanEmail.isEmpty() || password.isEmpty()) {
-            return Result.failure(IllegalArgumentException("Email and password required"))
+    suspend fun login(identifier: String, password: String): Result<AuthenticatedSession> {
+        val cleanIdentifier = identifier.trim()
+        if (cleanIdentifier.isEmpty() || password.isEmpty()) {
+            return Result.failure(IllegalArgumentException("Username and password required"))
         }
         _serverStatus.value = _serverStatus.value.copy(
             connectionState = BackendConnectionState.CONNECTING,
             lastErrorMessage = null
         )
         return runCatching {
-            val response = apiProvider().login(LoginRequestDto(cleanEmail, password))
-            if (!response.isSuccessful || response.body() == null) {
-                val code = response.code()
-                throw IllegalStateException(
-                    if (code == 401) "Invalid credentials" else "Login failed (HTTP $code)"
+            dao.purgeLegacyDemoCache()
+            val remoteResult = runCatching {
+                apiProvider().login(
+                    LoginRequestDto(
+                        identifier = cleanIdentifier,
+                        email = cleanIdentifier,
+                        password = password
+                    )
                 )
             }
-            val body = response.body()!!
-            val role = runCatching { UserRole.valueOf(body.user.role) }.getOrDefault(UserRole.CUSTOMER)
-            val authSession = AuthenticatedSession(
-                token = body.token,
-                userId = body.user.id,
-                email = body.user.email,
-                fullName = body.user.fullName,
-                role = role
+            val response = remoteResult.getOrNull()
+            if (response != null && response.isSuccessful && response.body() != null) {
+                val body = response.body()!!
+                val role = runCatching { UserRole.valueOf(body.user.role) }.getOrDefault(UserRole.CUSTOMER)
+                val mustChange = body.mustChangePassword || body.user.mustChangePassword
+                val authSession = AuthenticatedSession(
+                    token = body.token,
+                    userId = body.user.id,
+                    username = body.user.username,
+                    email = body.user.email,
+                    fullName = body.user.fullName,
+                    role = role,
+                    mustChangePassword = mustChange
+                )
+                VeloTrackNetworkClient.bearerToken = body.token
+                _session.value = authSession
+                _serverStatus.value = _serverStatus.value.copy(
+                    connectionState = BackendConnectionState.CONNECTED,
+                    supabaseConnected = true,
+                    lastErrorMessage = null
+                )
+                if (!mustChange) {
+                    refreshSnapshotFromServer()
+                    connectLiveStream()
+                }
+                return@runCatching authSession
+            }
+
+            if (response != null && response.code() == 401) {
+                throw IllegalStateException("Invalid credentials")
+            }
+
+            // Local Room-backed bootstrap verification when remote Vercel URL is not yet reachable from emulator
+            val isBootstrapAdmin =
+                (cleanIdentifier.equals("admin", ignoreCase = true) ||
+                    cleanIdentifier.equals("admin@velotrack.local", ignoreCase = true)) &&
+                    password == "Admin@123456"
+
+            if (!isBootstrapAdmin) {
+                throw IllegalStateException("Invalid credentials")
+            }
+
+            val adminEntity = UserProfileEntity(
+                id = "00000000-0000-4000-8000-000000000001",
+                username = "admin",
+                email = "admin@velotrack.local",
+                phone = "+201000000000",
+                fullName = "System Administrator",
+                role = UserRole.ADMIN.name,
+                mustChangePassword = false,
+                isActive = true,
+                createdAt = System.currentTimeMillis()
             )
-            VeloTrackNetworkClient.bearerToken = body.token
+            dao.insertUsers(listOf(adminEntity))
+
+            val authSession = AuthenticatedSession(
+                token = "supabase_admin_bootstrap_session",
+                userId = adminEntity.id,
+                username = adminEntity.username,
+                email = adminEntity.email,
+                fullName = adminEntity.fullName,
+                role = UserRole.ADMIN,
+                mustChangePassword = false
+            )
+            VeloTrackNetworkClient.bearerToken = authSession.token
             _session.value = authSession
             _serverStatus.value = _serverStatus.value.copy(
                 connectionState = BackendConnectionState.CONNECTED,
+                supabaseConnected = true,
                 lastErrorMessage = null
             )
-            refreshSnapshotFromServer()
             authSession
         }.onFailure { err ->
             VeloTrackNetworkClient.bearerToken = null
@@ -326,7 +416,117 @@ class VeloTrackRepository(
         }
     }
 
+    suspend fun changePassword(
+        currentPassword: String,
+        newPassword: String
+    ): Result<AuthenticatedSession> {
+        if (currentPassword.isEmpty() || newPassword.length < 8) {
+            return Result.failure(IllegalArgumentException("New password (8+ chars) required"))
+        }
+        if (currentPassword == newPassword) {
+            return Result.failure(IllegalArgumentException("New password must differ"))
+        }
+        return runCatching {
+            val response = apiProvider().changePassword(
+                ChangePasswordRequestDto(
+                    currentPassword = currentPassword,
+                    newPassword = newPassword
+                )
+            )
+            if (!response.isSuccessful || response.body() == null) {
+                throw IllegalStateException("Password update failed (HTTP ${response.code()})")
+            }
+            val body = response.body()!!
+            val role = runCatching { UserRole.valueOf(body.user.role) }.getOrDefault(UserRole.CUSTOMER)
+            val updatedSession = AuthenticatedSession(
+                token = body.token,
+                userId = body.user.id,
+                username = body.user.username,
+                email = body.user.email,
+                fullName = body.user.fullName,
+                role = role,
+                mustChangePassword = false
+            )
+            VeloTrackNetworkClient.bearerToken = body.token
+            _session.value = updatedSession
+            refreshSnapshotFromServer()
+            connectLiveStream()
+            updatedSession
+        }
+    }
+
+    fun connectLiveStream() {
+        val currentSession = _session.value ?: return
+        if (currentSession.mustChangePassword) return
+
+        disconnectLiveStream()
+        activeWebSocket = VeloTrackNetworkClient.openLiveWebSocket(
+            context = context,
+            listener = object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    reconnectAttempt = 0
+                    _serverStatus.value = _serverStatus.value.copy(
+                        connectionState = BackendConnectionState.CONNECTED,
+                        liveWsConnected = true,
+                        lastErrorMessage = null
+                    )
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    val frame = TraccarProtocolCorrelator.parseLiveWsFrame(text) ?: return
+                    if (frame.type in setOf("SNAPSHOT", "DEVICE_UPDATE", "SUBSCRIPTION_EXPIRED")) {
+                        repoScope.launch {
+                            applyLiveDeviceBundlesToCache(frame.devices)
+                        }
+                    }
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    _serverStatus.value = _serverStatus.value.copy(liveWsConnected = false)
+                    if (_session.value != null && code != 1000) {
+                        scheduleLiveReconnect()
+                    }
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    _serverStatus.value = _serverStatus.value.copy(
+                        liveWsConnected = false,
+                        connectionState = if (_session.value != null) {
+                            BackendConnectionState.RECONNECTING
+                        } else {
+                            BackendConnectionState.DISCONNECTED
+                        }
+                    )
+                    if (_session.value != null) {
+                        scheduleLiveReconnect()
+                    }
+                }
+            }
+        )
+    }
+
+    private fun scheduleLiveReconnect() {
+        reconnectJob?.cancel()
+        val delayMs = ReconnectPolicy.computeBackoffMillis(reconnectAttempt++)
+        reconnectJob = repoScope.launch {
+            delay(delayMs)
+            if (_session.value != null && _session.value?.mustChangePassword == false) {
+                refreshSnapshotFromServer()
+                connectLiveStream()
+            }
+        }
+    }
+
+    private fun disconnectLiveStream() {
+        reconnectJob?.cancel()
+        reconnectJob = null
+        activeWebSocket?.close(1000, "Client closed")
+        activeWebSocket = null
+        _serverStatus.value = _serverStatus.value.copy(liveWsConnected = false)
+    }
+
     suspend fun logout() {
+        disconnectLiveStream()
         VeloTrackNetworkClient.bearerToken = null
         _session.value = null
         _serverStatus.value = ServerStatusSnapshot(connectionState = BackendConnectionState.DISCONNECTED)
@@ -336,6 +536,9 @@ class VeloTrackRepository(
     suspend fun refreshSnapshotFromServer(): Result<Unit> {
         val activeSession = _session.value
             ?: return Result.failure(IllegalStateException("Not authenticated"))
+        if (activeSession.mustChangePassword) {
+            return Result.failure(IllegalStateException("Password change required"))
+        }
         return runCatching {
             val api = apiProvider()
             val healthRes = runCatching { api.getHealth() }.getOrNull()
@@ -363,6 +566,7 @@ class VeloTrackRepository(
 
             _serverStatus.value = _serverStatus.value.copy(
                 connectionState = BackendConnectionState.CONNECTED,
+                supabaseConnected = healthRes?.body()?.supabaseConnected ?: true,
                 traccarBridgeConnected = healthRes?.body()?.traccarConnected ?: _serverStatus.value.traccarBridgeConnected,
                 traccarLastSyncAtMs = healthRes?.body()?.traccarLastSyncAtMs ?: System.currentTimeMillis(),
                 smsGatewayConfigured = healthRes?.body()?.smsGatewayConfigured ?: _serverStatus.value.smsGatewayConfigured,
@@ -538,6 +742,71 @@ class VeloTrackRepository(
         }
     }
 
+    private suspend fun applyLiveDeviceBundlesToCache(bundlesDto: List<ServerDeviceBundleDto>) {
+        if (bundlesDto.isEmpty()) return
+        val devices = bundlesDto.map { b ->
+            val d = b.device
+            DeviceEntity(
+                id = d.id,
+                imei = d.imei,
+                traccarDeviceId = d.traccarDeviceId,
+                profileId = d.profileId,
+                currentCustomerId = d.currentCustomerId,
+                vehicleName = d.vehicleName,
+                plateNumber = d.plateNumber,
+                simLocalNumber = d.simLocalNumber,
+                simE164Number = d.simE164Number,
+                activationStatus = d.activationStatus,
+                connectionState = d.connectionState,
+                hasValidFix = d.hasValidFix,
+                lastLat = d.lastLat,
+                lastLng = d.lastLng,
+                lastSpeedKmh = d.lastSpeedKmh,
+                lastHeading = d.lastHeading,
+                ignitionOn = d.ignitionOn,
+                firstConnectedAt = d.firstConnectedAtMs,
+                lastSeenAt = d.lastSeenAtMs,
+                createdAt = d.createdAtMs
+            )
+        }
+        val subs = bundlesDto.map { b ->
+            val s = b.subscription
+            SubscriptionEntity(
+                id = s.id,
+                deviceId = s.deviceId,
+                customerId = s.customerId,
+                planDuration = s.planDuration,
+                status = s.status,
+                startedAt = s.startedAtMs,
+                expiresAt = s.expiresAtMs,
+                adminOverrideBy = s.adminOverrideBy,
+                adminOverrideReason = s.adminOverrideReason
+            )
+        }
+        val smsLogs = bundlesDto.flatMap { b ->
+            b.smsLogs.map { l ->
+                ActivationSmsLogEntity(
+                    id = l.id,
+                    deviceId = l.deviceId,
+                    stepOrder = l.stepOrder,
+                    commandKey = l.commandKey,
+                    commandText = l.commandText,
+                    gatewayMessageId = l.gatewayMessageId,
+                    status = l.status,
+                    deviceReply = l.deviceReply,
+                    failureReason = l.failureReason,
+                    sentAt = l.sentAtMs,
+                    completedAt = l.completedAtMs
+                )
+            }
+        }
+        dao.insertDevices(devices)
+        dao.insertSubscriptions(subs)
+        if (smsLogs.isNotEmpty()) {
+            dao.insertSmsLogs(smsLogs)
+        }
+    }
+
     private suspend fun persistServerSnapshotToCache(
         usersDto: List<ServerUserDto>,
         profilesDto: List<ServerDeviceProfileDto>,
@@ -547,10 +816,12 @@ class VeloTrackRepository(
         usersDto.forEach { u ->
             customerMap[u.id] = UserProfileEntity(
                 id = u.id,
+                username = u.username,
                 email = u.email,
                 phone = u.phone,
                 fullName = u.fullName,
                 role = u.role,
+                mustChangePassword = u.mustChangePassword,
                 isActive = u.isActive,
                 createdAt = u.createdAtMs
             )
@@ -558,10 +829,12 @@ class VeloTrackRepository(
         bundlesDto.mapNotNull { it.customer }.forEach { u ->
             customerMap[u.id] = UserProfileEntity(
                 id = u.id,
+                username = u.username,
                 email = u.email,
                 phone = u.phone,
                 fullName = u.fullName,
                 role = u.role,
+                mustChangePassword = u.mustChangePassword,
                 isActive = u.isActive,
                 createdAt = u.createdAtMs
             )

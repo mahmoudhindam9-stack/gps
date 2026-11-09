@@ -7,10 +7,12 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "users_profile")
 data class UserProfileEntity(
     @PrimaryKey val id: String,
+    val username: String? = null,
     val email: String,
     val phone: String,
     val fullName: String,
     val role: String, // ADMIN or CUSTOMER
+    val mustChangePassword: Boolean = false,
     val isActive: Boolean = true,
     val createdAt: Long
 )

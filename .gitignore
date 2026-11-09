@@ -15,4 +15,9 @@
 .cxx
 local.properties
 .env
+backend/.env
+deployment/traccar/.env
+node_modules/
+backend/node_modules/
+.velotrack-supabase-pg/
 debug.keystore

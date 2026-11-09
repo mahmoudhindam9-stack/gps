@@ -3,11 +3,13 @@ package com.example
 import com.example.data.local.DeviceEntity
 import com.example.data.local.SubscriptionEntity
 import com.example.data.model.ActivationStatus
+import com.example.data.model.AuthenticatedSession
 import com.example.data.model.DeviceConnectionState
 import com.example.data.model.PlanDuration
 import com.example.data.model.ReconnectPolicy
 import com.example.data.model.SimAndImeiValidator
 import com.example.data.model.SubscriptionStatus
+import com.example.data.model.UserRole
 import com.example.data.network.TraccarDeviceDto
 import com.example.data.network.TraccarPositionDto
 import com.example.data.repository.TraccarProtocolCorrelator
@@ -101,6 +103,32 @@ class ExampleUnitTest {
         assertEquals("358739051122332", devices.first().uniqueId)
         assertEquals(1, positions.size)
         assertEquals(37.04f, TraccarProtocolCorrelator.knotsToKmh(positions.first().speed), 0.02f)
+
+        val liveWsJson = """
+            {
+              "type": "DEVICE_UPDATE",
+              "timestampMs": 1710000000000,
+              "devices": []
+            }
+        """.trimIndent()
+        val liveFrame = TraccarProtocolCorrelator.parseLiveWsFrame(liveWsJson)
+        assertNotNull(liveFrame)
+        assertEquals("DEVICE_UPDATE", liveFrame!!.type)
+    }
+
+    @Test
+    fun authenticatedSession_preservesUsernameAndMustChangePasswordFlag() {
+        val bootstrapAdminSession = AuthenticatedSession(
+            token = "jwt.token.value",
+            userId = "uuid-admin-1",
+            username = "admin",
+            email = "owner@velotrack.local",
+            fullName = "System Administrator",
+            role = UserRole.ADMIN,
+            mustChangePassword = true
+        )
+        assertEquals("admin", bootstrapAdminSession.username)
+        assertTrue(bootstrapAdminSession.mustChangePassword)
     }
 
     @Test

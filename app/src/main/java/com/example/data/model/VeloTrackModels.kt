@@ -73,9 +73,11 @@ enum class BackendConnectionState(val shortLabel: String) {
 data class AuthenticatedSession(
     val token: String,
     val userId: String,
+    val username: String? = null,
     val email: String,
     val fullName: String,
-    val role: UserRole
+    val role: UserRole,
+    val mustChangePassword: Boolean = false
 )
 
 data class DeviceAggregate(

@@ -106,6 +106,22 @@ fun ServerArchitectureScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier.fillMaxWidth()
                 ) {
+                    Text(
+                        text = "SUPABASE DB",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 11.sp
+                    )
+                    StatusPill(
+                        text = if (serverStatus.supabaseConnected) "ONLINE" else "OFFLINE",
+                        color = if (serverStatus.supabaseConnected) StatusMovingEmerald else StatusOfflineSlate
+                    )
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Dns,
@@ -123,6 +139,22 @@ fun ServerArchitectureScreen(
                     StatusPill(
                         text = if (serverStatus.traccarBridgeConnected) "ONLINE" else "OFFLINE",
                         color = if (serverStatus.traccarBridgeConnected) StatusMovingEmerald else StatusOfflineSlate
+                    )
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "LIVE WS",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 11.sp
+                    )
+                    StatusPill(
+                        text = if (serverStatus.liveWsConnected) "LIVE" else "OFFLINE",
+                        color = if (serverStatus.liveWsConnected) StatusMovingEmerald else StatusOfflineSlate
                     )
                 }
 

@@ -22,22 +22,31 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 data class LoginRequestDto(
-    val email: String,
+    val identifier: String,
+    val email: String = identifier,
     val password: String
+)
+
+data class ChangePasswordRequestDto(
+    val currentPassword: String,
+    val newPassword: String
 )
 
 data class ServerUserDto(
     val id: String,
+    val username: String? = null,
     val email: String,
     val phone: String,
     val fullName: String,
     val role: String,
+    val mustChangePassword: Boolean = false,
     val isActive: Boolean = true,
     val createdAtMs: Long = 0L
 )
 
 data class LoginResponseDto(
     val token: String,
+    val mustChangePassword: Boolean = false,
     val user: ServerUserDto
 )
 
@@ -200,7 +209,9 @@ data class ServerRoutePointDto(
 
 data class ServerHealthResponseDto(
     val status: String,
+    val supabaseConnected: Boolean = false,
     val traccarConnected: Boolean = false,
+    val traccarWsConnected: Boolean = false,
     val traccarLastSyncAtMs: Long? = null,
     val smsGatewayConfigured: Boolean = false
 )
@@ -208,6 +219,13 @@ data class ServerHealthResponseDto(
 data class TraccarSyncResponseDto(
     val updatedDeviceIds: List<String> = emptyList(),
     val syncedAtMs: Long? = null
+)
+
+data class LiveWsFrameDto(
+    val type: String,
+    val timestampMs: Long = 0L,
+    val devices: List<ServerDeviceBundleDto> = emptyList(),
+    val error: String? = null
 )
 
 // Official Traccar REST / WebSocket DTOs for protocol parsing & integration tests
@@ -243,6 +261,11 @@ interface VeloTrackApiService {
     @POST("api/v1/auth/login")
     suspend fun login(
         @Body request: LoginRequestDto
+    ): Response<LoginResponseDto>
+
+    @POST("api/v1/auth/change-password")
+    suspend fun changePassword(
+        @Body request: ChangePasswordRequestDto
     ): Response<LoginResponseDto>
 
     @GET("api/v1/auth/me")
@@ -297,11 +320,14 @@ interface VeloTrackApiService {
 }
 
 object VeloTrackNetworkClient {
+    private const val DEFAULT_PUBLIC_HTTPS_API =
+        "https://ais-dev-pyvkwycypjqouw4m3akizc-224077296538.europe-west2.run.app/"
+
     @Volatile
     var bearerToken: String? = null
 
     @Volatile
-    var baseUrl: String = BuildConfig.VELOTRACK_API_BASE_URL.ifBlank { "http://127.0.0.1:3000/" }
+    var baseUrl: String = BuildConfig.VELOTRACK_API_BASE_URL.ifBlank { DEFAULT_PUBLIC_HTTPS_API }
 
     private val moshi: Moshi = Moshi.Builder()
         .add(KotlinJsonAdapterFactory())
@@ -311,7 +337,7 @@ object VeloTrackNetworkClient {
 
     fun normalizeBaseUrl(rawUrl: String): String {
         val trimmed = rawUrl.trim()
-        if (trimmed.isEmpty()) return "http://127.0.0.1:3000/"
+        if (trimmed.isEmpty()) return DEFAULT_PUBLIC_HTTPS_API
         return if (trimmed.endsWith("/")) trimmed else "$trimmed/"
     }
 

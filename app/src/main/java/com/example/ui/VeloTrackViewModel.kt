@@ -145,16 +145,34 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
         repository.updateBackendBaseUrl(url)
     }
 
-    fun login(email: String, password: String) {
+    fun login(identifier: String, password: String) {
         viewModelScope.launch {
             _isLoading.value = true
-            val res = repository.login(email, password)
+            val res = repository.login(identifier, password)
             _isLoading.value = false
             res.onSuccess { auth ->
                 _currentTab.value = AppTab.MAP
-                showBanner("${auth.role.shortLabel} • ${auth.email}")
+                val label = auth.username ?: auth.email
+                showBanner(
+                    if (auth.mustChangePassword) "Password change required"
+                    else "${auth.role.shortLabel} • $label"
+                )
             }.onFailure { err ->
                 showBanner(err.message ?: "Login failed")
+            }
+        }
+    }
+
+    fun changePassword(currentPassword: String, newPassword: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val res = repository.changePassword(currentPassword, newPassword)
+            _isLoading.value = false
+            res.onSuccess { auth ->
+                _currentTab.value = AppTab.MAP
+                showBanner("${auth.role.shortLabel} • ${auth.username ?: auth.email}")
+            }.onFailure { err ->
+                showBanner(err.message ?: "Password update failed")
             }
         }
     }

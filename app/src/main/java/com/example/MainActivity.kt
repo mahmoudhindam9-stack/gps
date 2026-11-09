@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Map
@@ -111,7 +112,7 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
     val routePlayback by viewModel.routePlayback.collectAsStateWithLifecycle()
     val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
 
-    if (session != null && currentTab != AppTab.MAP) {
+    if (session != null && session?.mustChangePassword == false && currentTab != AppTab.MAP) {
         BackHandler {
             viewModel.selectTab(AppTab.MAP)
         }
@@ -137,7 +138,7 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
             )
         },
         bottomBar = {
-            if (session != null) {
+            if (session != null && !session!!.mustChangePassword) {
                 NavigationBar(
                     containerColor = MaterialTheme.colorScheme.surface,
                     tonalElevation = 6.dp
@@ -206,10 +207,14 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
             ) {
                 if (session == null) {
                     VeloTrackLoginScreen(
-                        serverUrlInput = serverUrlInput,
                         serverStatus = serverStatus,
-                        onUpdateServerUrl = { viewModel.updateServerUrl(it) },
-                        onLogin = { email, pass -> viewModel.login(email, pass) }
+                        onLogin = { identifier, pass -> viewModel.login(identifier, pass) }
+                    )
+                } else if (session!!.mustChangePassword) {
+                    VeloTrackForcePasswordChangeScreen(
+                        onChangePassword = { currentPass, newPass ->
+                            viewModel.changePassword(currentPass, newPass)
+                        }
                     )
                 } else {
                     when (currentTab) {
@@ -272,12 +277,10 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
 
 @Composable
 private fun VeloTrackLoginScreen(
-    serverUrlInput: String,
     serverStatus: ServerStatusSnapshot,
-    onUpdateServerUrl: (String) -> Unit,
     onLogin: (String, String) -> Unit
 ) {
-    var email by rememberSaveable { mutableStateOf("") }
+    var identifier by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
 
     Box(
@@ -321,19 +324,9 @@ private fun VeloTrackLoginScreen(
                 }
 
                 OutlinedTextField(
-                    value = serverUrlInput,
-                    onValueChange = onUpdateServerUrl,
-                    label = { Text("Server URL") },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("login_server_url_input")
-                )
-
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    label = { Text("Email") },
+                    value = identifier,
+                    onValueChange = { identifier = it },
+                    label = { Text("Username") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                     singleLine = true,
                     modifier = Modifier
@@ -363,7 +356,7 @@ private fun VeloTrackLoginScreen(
                 }
 
                 Button(
-                    onClick = { onLogin(email, password) },
+                    onClick = { onLogin(identifier, password) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 48.dp)
@@ -372,6 +365,88 @@ private fun VeloTrackLoginScreen(
                     Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Login", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VeloTrackForcePasswordChangeScreen(
+    onChangePassword: (String, String) -> Unit
+) {
+    var currentPassword by rememberSaveable { mutableStateOf("") }
+    var newPassword by rememberSaveable { mutableStateOf("") }
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .testTag("force_password_change_screen")
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 420.dp)
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp))
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Change Password",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    StatusPill(
+                        text = "REQUIRED",
+                        color = StatusWaitingAmber
+                    )
+                }
+
+                OutlinedTextField(
+                    value = currentPassword,
+                    onValueChange = { currentPassword = it },
+                    label = { Text("Current Password") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("change_password_current_input")
+                )
+
+                OutlinedTextField(
+                    value = newPassword,
+                    onValueChange = { newPassword = it },
+                    label = { Text("New Password") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("change_password_new_input")
+                )
+
+                Button(
+                    onClick = { onChangePassword(currentPassword, newPassword) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .testTag("change_password_submit_button")
+                ) {
+                    Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Update Password", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -428,7 +503,7 @@ private fun VeloTrackTopHeader(
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (session != null) {
+                if (session != null && !session.mustChangePassword) {
                     IconButton(
                         onClick = onRefresh,
                         modifier = Modifier

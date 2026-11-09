@@ -1,382 +1,495 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import http from "node:http";
+import { PGlite } from "@electric-sql/pglite";
+import WebSocket, { WebSocketServer } from "ws";
 import {
-  AuthService,
+  SupabaseAuthService,
+  SupabaseDatabaseAdapter,
   TraccarBridgeClient,
-  VeloTrackEngine,
-  isValidImei,
-  normalizeEgyptianSim
+  VeloTrackEngine
 } from "../src/core.mjs";
+import { createVeloTrackHttpServer } from "../src/server.mjs";
 
-const TEST_SECRET = "test_only_32_byte_hmac_secret_key_velotrack_2026";
+const TEST_JWT_SECRET = "velotrack_supabase_jwt_secret_key_32_bytes_minimum_2026";
 
-function createTestHarness({ smsGatewayImpl } = {}) {
-  const authService = new AuthService(TEST_SECRET);
-  let nextTraccarId = 500;
-  const traccarDevicesStore = [];
-  const traccarPositionsStore = [];
+test("1. One-time initial admin bootstrap (username `admin`), mandatory 1st-login password change, and PostgreSQL persistence across restarts", async () => {
+  const tempPgDir = fs.mkdtempSync(path.join(os.tmpdir(), "velotrack-pg-"));
+  try {
+    // --- Boot #1 ---
+    const pglite1 = new PGlite(tempPgDir);
+    const db1 = new SupabaseDatabaseAdapter({ pglite: pglite1 });
+    await db1.applySchemaMigration();
 
-  const mockFetch = async (url, options = {}) => {
-    const u = String(url);
-    if (u.endsWith("/api/session") && options.method === "POST") {
-      if (String(options.body).includes("wrongpass")) {
-        return { ok: false, status: 401, headers: new Map() };
+    const auth1 = new SupabaseAuthService({
+      supabaseJwtSecret: TEST_JWT_SECRET,
+      dbAdapter: db1
+    });
+    const traccar1 = new TraccarBridgeClient({
+      baseUrl: "http://127.0.0.1:8082",
+      adminEmail: "traccar@velotrack.local",
+      adminPassword: "traccar_secret_password"
+    });
+    const engine1 = new VeloTrackEngine({
+      dbAdapter: db1,
+      authService: auth1,
+      traccarClient: traccar1,
+      smsGateway: { async sendSms() { return { gatewayMessageId: "gw-1", initialStatus: "ACCEPTED" }; } }
+    });
+
+    // Missing VELOTRACK_INITIAL_ADMIN_EMAIL must be rejected
+    await assert.rejects(
+      () =>
+        engine1.bootstrapInitialAdminIfNeeded({
+          adminEmail: "",
+          adminUsername: "admin",
+          adminPassword: "Admin@123456"
+        }),
+      /BOOTSTRAP_ADMIN_EMAIL_REQUIRED/
+    );
+
+    // Perform one-time initial administrator bootstrap
+    const bootRes1 = await engine1.bootstrapInitialAdminIfNeeded({
+      adminEmail: "owner.admin@velotrack.local",
+      adminUsername: "admin",
+      adminPassword: "Admin@123456"
+    });
+    assert.equal(bootRes1.bootstrapped, true);
+    assert.equal(bootRes1.username, "admin");
+    assert.equal(bootRes1.mustChangePassword, true);
+
+    // Login using username `admin` and temporary password `Admin@123456`
+    const firstLogin = await engine1.login("admin", "Admin@123456");
+    assert.equal(firstLogin.mustChangePassword, true);
+    assert.equal(firstLogin.user.username, "admin");
+    assert.equal(firstLogin.user.role, "ADMIN");
+
+    const claims = auth1.verifyToken(firstLogin.token);
+
+    // All protected business operations must be blocked until password is changed
+    await assert.rejects(
+      () => engine1.listAuthorizedDevices(claims),
+      /PASSWORD_CHANGE_REQUIRED/
+    );
+
+    // Change password after first login
+    const changed = await engine1.changePassword(claims, {
+      currentPassword: "Admin@123456",
+      newPassword: "NewStrongAdmin#2026"
+    });
+    assert.equal(changed.mustChangePassword, false);
+
+    // Old temporary password must no longer work
+    await assert.rejects(
+      () => engine1.login("admin", "Admin@123456"),
+      /INVALID_CREDENTIALS/
+    );
+
+    // Create a persistent profile before shutting down Boot #1
+    const updatedClaims = auth1.verifyToken(changed.token);
+    const createdProfile = await engine1.registerDeviceProfile(updatedClaims, {
+      manufacturer: "Concox",
+      model: "GT06N",
+      firmwareVersion: "V1.0",
+      serverHost: "gps.velotrack.local",
+      serverPort: 5023,
+      serverCommandTemplate: "SERVER,1,gps.velotrack.local,5023,0#"
+    });
+    assert.equal(createdProfile.isVerified, false);
+
+    await db1.close();
+
+    // --- Boot #2 (Simulate full service restart on the same PostgreSQL storage) ---
+    const pglite2 = new PGlite(tempPgDir);
+    const db2 = new SupabaseDatabaseAdapter({ pglite: pglite2 });
+    await db2.applySchemaMigration();
+
+    const auth2 = new SupabaseAuthService({
+      supabaseJwtSecret: TEST_JWT_SECRET,
+      dbAdapter: db2
+    });
+    const engine2 = new VeloTrackEngine({
+      dbAdapter: db2,
+      authService: auth2,
+      traccarClient: traccar1,
+      smsGateway: { async sendSms() { return { gatewayMessageId: "gw-1", initialStatus: "ACCEPTED" }; } }
+    });
+
+    // Bootstrap must be disabled and must NOT reset the admin password back to Admin@123456
+    const bootRes2 = await engine2.bootstrapInitialAdminIfNeeded({
+      adminEmail: "owner.admin@velotrack.local",
+      adminUsername: "admin",
+      adminPassword: "Admin@123456"
+    });
+    assert.equal(bootRes2.bootstrapped, false);
+    assert.equal(bootRes2.reason, "ALREADY_BOOTSTRAPPED");
+
+    await assert.rejects(
+      () => engine2.login("admin", "Admin@123456"),
+      /INVALID_CREDENTIALS/
+    );
+
+    const restartLogin = await engine2.login("admin", "NewStrongAdmin#2026");
+    assert.equal(restartLogin.mustChangePassword, false);
+
+    const profilesAfterRestart = await engine2.listDeviceProfiles(
+      auth2.verifyToken(restartLogin.token)
+    );
+    assert.equal(profilesAfterRestart.length, 1);
+    assert.equal(profilesAfterRestart[0].id, createdProfile.id);
+
+    await db2.close();
+  } finally {
+    fs.rmSync(tempPgDir, { recursive: true, force: true });
+  }
+});
+
+test("2. Traccar remote loopback guard, authentication failure, real JSESSIONID extraction, and bounded reconnect backoff", async () => {
+  // Never allow 127.0.0.1 when deployed externally without a private tunnel
+  assert.throws(
+    () =>
+      new TraccarBridgeClient({
+        baseUrl: "http://127.0.0.1:8082",
+        adminEmail: "admin@velotrack.local",
+        adminPassword: "secret",
+        deploymentMode: "external",
+        privateTunnelEnabled: false
+      }),
+    /TRACCAR_REMOTE_LOOPBACK_FORBIDDEN/
+  );
+
+  let authShouldFail = true;
+  const mockFetch = async () => {
+    if (authShouldFail) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    return new Response(JSON.stringify({ id: 1, email: "admin@velotrack.local" }), {
+      status: 200,
+      headers: {
+        "set-cookie": "JSESSIONID=real_traccar_session_998877; Path=/; HttpOnly"
       }
-      return {
-        ok: true,
-        status: 200,
-        headers: {
-          getSetCookie: () => ["JSESSIONID=real_traccar_session_abc123; Path=/; HttpOnly"]
-        },
-        json: async () => ({ id: 1, email: "admin@traccar.local" })
-      };
-    }
-    if (u.endsWith("/api/devices") && options.method === "POST") {
-      const body = JSON.parse(options.body);
-      const created = {
-        id: ++nextTraccarId,
-        name: body.name,
-        uniqueId: body.uniqueId,
-        status: "offline"
-      };
-      traccarDevicesStore.push(created);
-      return { ok: true, status: 200, json: async () => created };
-    }
-    if (u.endsWith("/api/devices")) {
-      return { ok: true, status: 200, json: async () => traccarDevicesStore };
-    }
-    if (u.endsWith("/api/positions")) {
-      return { ok: true, status: 200, json: async () => traccarPositionsStore };
-    }
-    if (u.includes("/api/reports/route")) {
-      return {
-        ok: true,
-        status: 200,
-        json: async () => [
-          {
-            id: 9001,
-            deviceId: 501,
-            latitude: 30.0444,
-            longitude: 31.2357,
-            speed: 20, // knots -> 37.04 km/h
-            course: 90,
-            valid: true,
-            attributes: { ignition: true },
-            fixTime: "2026-11-09T10:00:00Z"
-          }
-        ]
-      };
-    }
-    throw new Error(`Unexpected fetch URL: ${u}`);
+    });
   };
 
-  const traccarClient = new TraccarBridgeClient({
+  const client = new TraccarBridgeClient({
     baseUrl: "http://127.0.0.1:8082",
-    adminEmail: "admin@traccar.local",
-    adminPassword: "correct_password",
+    adminEmail: "admin@velotrack.local",
+    adminPassword: "secret",
     fetchImpl: mockFetch
   });
 
-  let msgSeq = 1;
-  const defaultSmsGateway = {
-    async sendSms() {
-      return {
-        gatewayMessageId: `gw_msg_${msgSeq++}`,
-        initialStatus: "ACCEPTED"
-      };
-    }
-  };
+  await assert.rejects(() => client.authenticateSession(), /TRACCAR_AUTH_FAILED_401/);
+  assert.equal(client.sessionCookie, null);
 
-  const engine = new VeloTrackEngine({
-    authService,
-    traccarClient,
-    smsGateway: smsGatewayImpl ?? defaultSmsGateway
-  });
-
-  return { authService, traccarClient, engine };
-}
-
-test("1. Authentication, JWT verification, and tenant RBAC isolation", () => {
-  const { authService, engine } = createTestHarness();
-  const admin = engine.createUser({
-    email: "admin@velotrack.local",
-    phone: "+201000000001",
-    fullName: "Admin",
-    password: "StrongPassword123!",
-    role: "ADMIN"
-  });
-  const customer = engine.createUser({
-    email: "cust1@velotrack.local",
-    phone: "+201012345678",
-    fullName: "Customer One",
-    password: "CustPassword123!",
-    role: "CUSTOMER"
-  });
-
-  assert.throws(() => engine.login("admin@velotrack.local", "WrongPass"), /INVALID_CREDENTIALS/);
-
-  const session = engine.login("cust1@velotrack.local", "CustPassword123!");
-  const claims = authService.verifyToken(session.token);
-  assert.equal(claims.userId, customer.id);
-  assert.equal(claims.role, "CUSTOMER");
-
-  // Customer cannot register device profiles
-  assert.throws(
-    () =>
-      engine.registerDeviceProfile(claims, {
-        manufacturer: "Concox",
-        model: "GT06N",
-        firmwareVersion: "v1.0",
-        serverHost: "gps.example.com",
-        serverCommandTemplate: "SERVER,1,gps.example.com,5023,0#"
-      }),
-    /FORBIDDEN_ADMIN_ONLY/
-  );
-  assert.ok(admin.id);
-});
-
-test("2. Traccar authentication failure, real JSESSIONID extraction, and bounded reconnect backoff", async () => {
-  const { traccarClient } = createTestHarness();
-  const cookie = await traccarClient.authenticateSession();
-  assert.equal(cookie, "JSESSIONID=real_traccar_session_abc123");
+  authShouldFail = false;
+  const cookie = await client.authenticateSession();
+  assert.equal(cookie, "JSESSIONID=real_traccar_session_998877");
 
   assert.equal(TraccarBridgeClient.computeReconnectDelayMs(0), 1000);
   assert.equal(TraccarBridgeClient.computeReconnectDelayMs(1), 2000);
   assert.equal(TraccarBridgeClient.computeReconnectDelayMs(2), 4000);
   assert.equal(TraccarBridgeClient.computeReconnectDelayMs(10), 30000);
-
-  const badClient = new TraccarBridgeClient({
-    baseUrl: "http://127.0.0.1:8082",
-    adminEmail: "admin@traccar.local",
-    adminPassword: "wrongpass",
-    fetchImpl: traccarClient.fetchImpl
-  });
-  await assert.rejects(() => badClient.authenticateSession(), /TRACCAR_AUTH_FAILED_401/);
-  assert.equal(badClient.sessionCookie, null);
 });
 
-test("3. SMS state transitions never activate device; first Traccar connection starts subscription", async () => {
-  const { authService, engine } = createTestHarness();
-  const admin = engine.createUser({
-    email: "admin@velotrack.local",
-    phone: "+201000000001",
-    fullName: "Admin",
-    password: "StrongPassword123!",
-    role: "ADMIN"
-  });
-  const cust1 = engine.createUser({
-    email: "cust1@velotrack.local",
-    phone: "+201012345678",
-    fullName: "Customer 1",
-    password: "CustPassword123!",
-    role: "CUSTOMER"
-  });
-  const adminClaims = authService.verifyToken(engine.login(admin.email, "StrongPassword123!").token);
+test("3. Full-stack Supabase RLS tenant isolation, SMS state transitions, Traccar WebSocket bridge, and /ws/live real-time updates", async () => {
+  const pglite = new PGlite();
+  const db = new SupabaseDatabaseAdapter({ pglite });
+  await db.applySchemaMigration();
 
-  // Profiles default to isVerified = false
-  const profile = engine.registerDeviceProfile(adminClaims, {
+  // Start a local Traccar HTTP + WebSocket server to verify real REST + WebSocket integration
+  const traccarHttp = http.createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    if (req.method === "POST" && url.pathname === "/api/session") {
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "Set-Cookie": "JSESSIONID=live_tc_cookie_123; Path=/; HttpOnly"
+      });
+      res.end(JSON.stringify({ id: 1 }));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/devices") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ id: 501, name: "Truck 01", uniqueId: "358739051122332" }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/devices") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify([]));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/positions") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify([]));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/reports/route") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify([
+          {
+            id: 9001,
+            deviceId: 501,
+            valid: true,
+            latitude: 30.0561,
+            longitude: 31.2394,
+            speed: 20,
+            course: 180,
+            fixTime: "2026-04-08T10:00:00.000Z",
+            attributes: { ignition: true }
+          }
+        ])
+      );
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+
+  const traccarWss = new WebSocketServer({ noServer: true });
+  const traccarSockets = new Set();
+  traccarHttp.on("upgrade", (req, socket, head) => {
+    if (req.url === "/api/socket" && String(req.headers.cookie ?? "").includes("JSESSIONID=")) {
+      traccarWss.handleUpgrade(req, socket, head, (ws) => {
+        traccarSockets.add(ws);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
+
+  await new Promise((resolve) => traccarHttp.listen(0, "127.0.0.1", resolve));
+  const traccarPort = traccarHttp.address().port;
+
+  const authService = new SupabaseAuthService({
+    supabaseJwtSecret: TEST_JWT_SECRET,
+    dbAdapter: db
+  });
+  const traccarClient = new TraccarBridgeClient({
+    baseUrl: `http://127.0.0.1:${traccarPort}`,
+    adminEmail: "admin@velotrack.local",
+    adminPassword: "traccar_password"
+  });
+  const smsGateway = {
+    async sendSms() {
+      return { gatewayMessageId: "gw-msg-501", initialStatus: "ACCEPTED" };
+    }
+  };
+  const engine = new VeloTrackEngine({
+    dbAdapter: db,
+    authService,
+    traccarClient,
+    smsGateway
+  });
+
+  await engine.bootstrapInitialAdminIfNeeded({
+    adminEmail: "admin@velotrack.local",
+    adminUsername: "admin",
+    adminPassword: "Admin@123456"
+  });
+  const initialSession = await engine.login("admin", "Admin@123456");
+  const adminSession = await engine.changePassword(
+    authService.verifyToken(initialSession.token),
+    { currentPassword: "Admin@123456", newPassword: "AdminUpdatedPassword#2026" }
+  );
+  const adminClaims = authService.verifyToken(adminSession.token);
+
+  // Create Customer A and Customer B
+  const custA = await engine.createCustomerAccount(adminClaims, {
+    username: "cust_a",
+    email: "a@customer.local",
+    phone: "01011112222",
+    fullName: "Customer A",
+    password: "CustomerAPass#123"
+  });
+  const custB = await engine.createCustomerAccount(adminClaims, {
+    username: "cust_b",
+    email: "b@customer.local",
+    phone: "01233334444",
+    fullName: "Customer B",
+    password: "CustomerBPass#123"
+  });
+
+  const custASession = await engine.login("cust_a", "CustomerAPass#123");
+  const custBSession = await engine.login("cust_b", "CustomerBPass#123");
+  const custAClaims = authService.verifyToken(custASession.token);
+  const custBClaims = authService.verifyToken(custBSession.token);
+
+  // Register and verify GT06N profile
+  const profile = await engine.registerDeviceProfile(adminClaims, {
     manufacturer: "Concox",
     model: "GT06N",
-    firmwareVersion: "v1.0",
+    firmwareVersion: "V4.2",
     serverHost: "gps.velotrack.local",
     serverPort: 5023,
-    requiresGprsonCommand: true,
-    serverCommandTemplate: "SERVER,1,gps.velotrack.local,5023,0#",
-    gprsonCommandTemplate: "GPRSON,1#"
+    serverCommandTemplate: "SERVER,1,gps.velotrack.local,5023,0#"
   });
-  assert.equal(profile.isVerified, false);
+  await engine.markProfileVerifiedAfterPhysicalTest(adminClaims, profile.id);
 
-  // Cannot provision with an unverified profile
-  await assert.rejects(
-    () =>
-      engine.provisionAndActivateDevice(adminClaims, {
-        profileId: profile.id,
-        imei: "358739051122332",
-        customerId: cust1.id,
-        vehicleName: "Truck 1",
-        plateNumber: "CAI-101",
-        planDuration: "MONTH_6",
-        simLocalWithoutPlus20: "01012345678"
-      }),
-    /PROFILE_NOT_VERIFIED_FOR_SMS/
-  );
-
-  // Mark verified after physical testing
-  engine.markProfileVerifiedAfterPhysicalTest(adminClaims, profile.id);
-
+  // Provision device for Customer A
   const provisioned = await engine.provisionAndActivateDevice(adminClaims, {
     profileId: profile.id,
     imei: "358739051122332",
-    customerId: cust1.id,
-    vehicleName: "Truck 1",
-    plateNumber: "CAI-101",
-    planDuration: "MONTH_6",
-    simLocalWithoutPlus20: "01012345678"
-  });
-
-  assert.equal(provisioned.device.traccarDeviceId, 501);
-  assert.equal(provisioned.device.activationStatus, "SMS_SENT");
-  assert.equal(provisioned.device.lastLat, null);
-  assert.equal(provisioned.subscription.status, "AWAITING_FIRST_CONNECTION");
-  assert.equal(provisioned.subscription.startedAtMs, null);
-  assert.equal(provisioned.smsLogs.length, 2);
-  assert.equal(provisioned.smsLogs[0].status, "ACCEPTED");
-
-  // Delivery report & inbound reply transition to WAITING_FOR_DEVICE, NOT ACTIVATED
-  engine.handleSmsDeliveryWebhook({
-    gatewayMessageId: provisioned.smsLogs[0].gatewayMessageId,
-    deliveryStatus: "DELIVERED"
-  });
-  engine.handleInboundSmsReply({
-    fromE164: "+201012345678",
-    replyText: "OK"
-  });
-  assert.equal(provisioned.device.activationStatus, "WAITING_FOR_DEVICE");
-  assert.equal(provisioned.subscription.status, "AWAITING_FIRST_CONNECTION");
-  assert.equal(provisioned.subscription.startedAtMs, null);
-
-  // Indoor login/heartbeat on Traccar WITHOUT satellite GPS fix activates device & starts subscription!
-  const firstConnTime = 1_760_000_000_000;
-  engine.ingestTraccarUpdate({
-    traccarDevices: [{ id: 501, uniqueId: "358739051122332", status: "online" }],
-    traccarPositions: [],
-    eventTimeMs: firstConnTime
-  });
-
-  assert.equal(provisioned.device.activationStatus, "ACTIVATED");
-  assert.equal(provisioned.device.connectionState, "ONLINE_NO_FIX");
-  assert.equal(provisioned.device.hasValidFix, false);
-  assert.equal(provisioned.subscription.status, "ACTIVE");
-  assert.equal(provisioned.subscription.startedAtMs, firstConnTime);
-  assert.equal(provisioned.subscription.expiresAtMs, firstConnTime + 180 * 86_400_000);
-
-  // Subsequent full satellite GPS fix updates coordinates
-  engine.ingestTraccarUpdate({
-    traccarDevices: [],
-    traccarPositions: [
-      {
-        deviceId: 501,
-        valid: true,
-        latitude: 30.0444,
-        longitude: 31.2357,
-        speed: 30,
-        course: 120,
-        attributes: { ignition: true },
-        fixTime: "2026-11-09T10:05:00Z"
-      }
-    ],
-    eventTimeMs: firstConnTime + 60_000
-  });
-  assert.equal(provisioned.device.connectionState, "ONLINE_GPS_FIX");
-  assert.equal(provisioned.device.hasValidFix, true);
-  assert.equal(provisioned.device.lastLat, 30.0444);
-});
-
-test("4. Server-side subscription expiration blocks route history and redacts customer coordinates, while customer reassignment preserves history", async () => {
-  const { authService, engine } = createTestHarness();
-  const admin = engine.createUser({
-    email: "admin@velotrack.local",
-    phone: "+201000000001",
-    fullName: "Admin",
-    password: "StrongPassword123!",
-    role: "ADMIN"
-  });
-  const cust1 = engine.createUser({
-    email: "cust1@velotrack.local",
-    phone: "+201012345678",
-    fullName: "Customer 1",
-    password: "CustPassword123!",
-    role: "CUSTOMER"
-  });
-  const cust2 = engine.createUser({
-    email: "cust2@velotrack.local",
-    phone: "+201223456789",
-    fullName: "Customer 2",
-    password: "CustPassword123!",
-    role: "CUSTOMER"
-  });
-
-  const adminClaims = authService.verifyToken(engine.login(admin.email, "StrongPassword123!").token);
-  const cust1Claims = authService.verifyToken(engine.login(cust1.email, "CustPassword123!").token);
-  const cust2Claims = authService.verifyToken(engine.login(cust2.email, "CustPassword123!").token);
-
-  const profile = engine.registerDeviceProfile(adminClaims, {
-    manufacturer: "Concox",
-    model: "GT06N",
-    firmwareVersion: "v1.0",
-    serverHost: "gps.velotrack.local",
-    serverCommandTemplate: "SERVER,1,gps.velotrack.local,5023,0#",
-    isVerified: true
-  });
-
-  const { device } = await engine.provisionAndActivateDevice(adminClaims, {
-    profileId: profile.id,
-    imei: "358739051122332",
-    customerId: cust1.id,
-    vehicleName: "Fleet Van",
-    plateNumber: "GIZ-202",
+    customerId: custA.id,
+    vehicleName: "Customer A Van",
+    plateNumber: "CA-101",
     planDuration: "MONTH_1",
     simLocalWithoutPlus20: "01012345678"
   });
+  const deviceId = provisioned.device.id;
 
-  const startMs = 1_760_000_000_000;
-  engine.ingestTraccarUpdate({
-    traccarDevices: [{ id: device.traccarDeviceId, uniqueId: device.imei, status: "online" }],
-    traccarPositions: [{ deviceId: device.traccarDeviceId, valid: true, latitude: 30.01, longitude: 31.21, speed: 10 }],
-    eventTimeMs: startMs
+  // Verify SMS delivery and reply NEVER activate the device or start the subscription
+  await engine.handleSmsDeliveryWebhook({
+    gatewayMessageId: "gw-msg-501",
+    deliveryStatus: "DELIVERED"
+  });
+  const afterReply = await engine.handleInboundSmsReply({
+    fromE164: "+201012345678",
+    replyText: "SERVER,OK!"
+  });
+  assert.equal(afterReply.device.activationStatus, "WAITING_FOR_DEVICE");
+
+  // Verify PostgreSQL RLS tenant isolation: Customer B sees 0 devices, Customer A sees 1
+  const listA = await engine.listAuthorizedDevices(custAClaims);
+  const listB = await engine.listAuthorizedDevices(custBClaims);
+  assert.equal(listA.length, 1);
+  assert.equal(listA[0].subscription.status, "AWAITING_FIRST_CONNECTION");
+  assert.equal(listA[0].subscription.startedAtMs, null);
+  assert.equal(listB.length, 0);
+
+  // Start VeloTrack HTTP + `/ws/live` server and connect Traccar live socket
+  const apiServer = createVeloTrackHttpServer({
+    engine,
+    authService,
+    traccarClient
+  });
+  await new Promise((resolve) => apiServer.listen(0, "127.0.0.1", resolve));
+  const apiPort = apiServer.address().port;
+
+  await traccarClient.connectLiveSocket({
+    onUpdate: async (frame) => {
+      await engine.ingestTraccarUpdate(frame);
+    }
   });
 
-  // Active subscription allows route history for cust1, blocks cust2
-  const route = await engine.getAuthorizedRouteHistory(cust1Claims, {
-    deviceId: device.id,
-    fromIso: "2026-11-09T00:00:00Z",
-    toIso: "2026-11-09T23:59:59Z",
-    nowMs: startMs + 1000
+  // Connect Customer A and Customer B to `/ws/live`
+  const wsFramesA = [];
+  const wsFramesB = [];
+  const clientWsA = new WebSocket(`ws://127.0.0.1:${apiPort}/ws/live`, {
+    headers: { Authorization: `Bearer ${custASession.token}` }
   });
-  assert.equal(route.length, 1);
+  const clientWsB = new WebSocket(`ws://127.0.0.1:${apiPort}/ws/live`, {
+    headers: { Authorization: `Bearer ${custBSession.token}` }
+  });
 
+  await Promise.all([
+    new Promise((resolve) => clientWsA.once("message", (msg) => {
+      wsFramesA.push(JSON.parse(msg.toString()));
+      resolve();
+    })),
+    new Promise((resolve) => clientWsB.once("message", (msg) => {
+      wsFramesB.push(JSON.parse(msg.toString()));
+      resolve();
+    }))
+  ]);
+
+  assert.equal(wsFramesA[0].type, "SNAPSHOT");
+  assert.equal(wsFramesA[0].devices.length, 1);
+  assert.equal(wsFramesB[0].type, "SNAPSHOT");
+  assert.equal(wsFramesB[0].devices.length, 0);
+
+  // Broadcast a real GPS fix over the Traccar `/api/socket` WebSocket
+  const updatePromiseA = new Promise((resolve) => {
+    clientWsA.once("message", (msg) => {
+      const parsed = JSON.parse(msg.toString());
+      wsFramesA.push(parsed);
+      resolve(parsed);
+    });
+  });
+
+  for (const tcWs of traccarSockets) {
+    tcWs.send(
+      JSON.stringify({
+        devices: [
+          {
+            id: 501,
+            name: "Customer A Van",
+            uniqueId: "358739051122332",
+            status: "online",
+            lastUpdate: "2026-04-08T10:05:00.000Z"
+          }
+        ],
+        positions: [
+          {
+            id: 9002,
+            deviceId: 501,
+            valid: true,
+            latitude: 30.0561,
+            longitude: 31.2394,
+            speed: 15,
+            course: 90,
+            fixTime: "2026-04-08T10:05:00.000Z",
+            attributes: { ignition: true }
+          }
+        ]
+      })
+    );
+  }
+
+  const liveEvent = await updatePromiseA;
+  assert.equal(liveEvent.type, "DEVICE_UPDATE");
+  assert.equal(liveEvent.devices[0].device.activationStatus, "ACTIVATED");
+  assert.equal(liveEvent.devices[0].device.connectionState, "ONLINE_GPS_FIX");
+  assert.equal(liveEvent.devices[0].subscription.status, "ACTIVE");
+  assert.notEqual(liveEvent.devices[0].subscription.startedAtMs, null);
+
+  // Verify Customer B still received zero device updates for Customer A's vehicle
+  assert.equal(wsFramesB.length, 1);
+
+  // Verify subscription expiration blocks route history and redacts customer coordinates
+  const expiredNowMs = liveEvent.devices[0].subscription.expiresAtMs + 5000;
   await assert.rejects(
     () =>
-      engine.getAuthorizedRouteHistory(cust2Claims, {
-        deviceId: device.id,
-        fromIso: "2026-11-09T00:00:00Z",
-        toIso: "2026-11-09T23:59:59Z",
-        nowMs: startMs + 1000
-      }),
-    /FORBIDDEN_TENANT_ISOLATION/
-  );
-
-  // After 31 days, subscription expires server-side -> route history blocked with SUBSCRIPTION_EXPIRED
-  const afterExpiryMs = startMs + 31 * 86_400_000;
-  await assert.rejects(
-    () =>
-      engine.getAuthorizedRouteHistory(cust1Claims, {
-        deviceId: device.id,
-        fromIso: "2026-11-09T00:00:00Z",
-        toIso: "2026-11-09T23:59:59Z",
-        nowMs: afterExpiryMs
+      engine.getAuthorizedRouteHistory(custAClaims, {
+        deviceId,
+        fromIso: "2026-04-08T00:00:00.000Z",
+        toIso: "2026-04-09T00:00:00.000Z",
+        nowMs: expiredNowMs
       }),
     /SUBSCRIPTION_EXPIRED/
   );
 
-  // Reassign to cust2 and renew subscription -> preserves SMS logs, subscription history, and ownership history
-  engine.reassignCustomer(adminClaims, {
-    deviceId: device.id,
-    newCustomerId: cust2.id,
-    reason: "Contract transfer",
-    nowMs: afterExpiryMs + 1000
+  const expiredViewA = await engine.listAuthorizedDevices(custAClaims, expiredNowMs);
+  assert.equal(expiredViewA[0].subscription.status, "EXPIRED");
+  assert.equal(expiredViewA[0].device.lastLat, null);
+
+  // Reassign device to Customer B and renew subscription
+  await engine.reassignCustomer(adminClaims, {
+    deviceId,
+    newCustomerId: custB.id,
+    reason: "Fleet transfer to Customer B"
   });
-  engine.renewSubscription(adminClaims, {
-    deviceId: device.id,
-    planDuration: "MONTH_12",
-    nowMs: afterExpiryMs + 2000
+  await engine.renewSubscription(adminClaims, {
+    deviceId,
+    planDuration: "MONTH_6",
+    nowMs: expiredNowMs
   });
 
-  const cust2Devices = engine.listAuthorizedDevices(cust2Claims, afterExpiryMs + 3000);
-  assert.equal(cust2Devices.length, 1);
-  assert.equal(cust2Devices[0].ownershipHistory.length, 1);
-  assert.equal(cust2Devices[0].subscriptionHistory.length, 4); // PROVISIONED, STARTED, EXPIRED, RENEWED
-  assert.equal(cust2Devices[0].smsLogs.length, 1);
-  assert.ok(isValidImei("358739051122332"));
-  assert.equal(normalizeEgyptianSim("01012345678").e164Number, "+201012345678");
+  const afterReassignA = await engine.listAuthorizedDevices(custAClaims, expiredNowMs + 1000);
+  const afterReassignB = await engine.listAuthorizedDevices(custBClaims, expiredNowMs + 1000);
+  assert.equal(afterReassignA.length, 0);
+  assert.equal(afterReassignB.length, 1);
+  assert.equal(afterReassignB[0].ownershipHistory.length, 1);
+
+  clientWsA.close();
+  clientWsB.close();
+  traccarClient.disconnectLiveSocket();
+  apiServer.wsHub.close();
+  await new Promise((resolve) => apiServer.close(resolve));
+  for (const s of traccarSockets) s.close();
+  traccarWss.close();
+  await new Promise((resolve) => traccarHttp.close(resolve));
+  await db.close();
 });
