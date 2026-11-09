@@ -78,9 +78,21 @@ export function createVeloTrackRequestListener({
       const pathname = url.pathname;
 
       if (req.method === "GET" && (pathname === "/" || pathname === "/api/v1/health")) {
-        return sendJson(res, 200, {
-          status: "OK",
-          supabaseConnected: true,
+        let databaseConnected = false;
+        let databaseError = null;
+        try {
+          await engine.db.runSystemTransaction(async (tx) => {
+            await tx.query("SELECT 1");
+          });
+          databaseConnected = true;
+        } catch (healthError) {
+          databaseError = healthError.message ?? "DATABASE_UNAVAILABLE";
+        }
+        const healthy = databaseConnected;
+        return sendJson(res, healthy ? 200 : 503, {
+          status: healthy ? "OK" : "DEGRADED",
+          supabaseConnected: databaseConnected,
+          databaseError,
           traccarConnected: Boolean(traccarClient.sessionCookie),
           traccarWsConnected: Boolean(traccarClient.wsConnected),
           traccarLastSyncAtMs: traccarClient.lastSyncAtMs,
@@ -269,13 +281,10 @@ export async function getOrCreateVeloTrackRuntime() {
     const supabaseUrl = process.env.SUPABASE_URL ?? "";
     const supabaseAnonKey = process.env.SUPABASE_ANON_KEY ?? "";
     const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-    const supabaseJwtSecret =
-      process.env.SUPABASE_JWT_SECRET ??
-      process.env.VELOTRACK_JWT_SECRET ??
-      "velotrack_supabase_jwt_default_secret_key_2026_32bytes";
+    const supabaseJwtSecret = process.env.SUPABASE_JWT_SECRET ?? "";
     const supabaseDbUrl = process.env.SUPABASE_DB_URL ?? process.env.VELOTRACK_DB_URL ?? "";
 
-    const traccarBaseUrl = process.env.TRACCAR_BASE_URL ?? "http://127.0.0.1:8082";
+    const traccarBaseUrl = process.env.TRACCAR_BASE_URL ?? "";
     const traccarAdminEmail = process.env.TRACCAR_ADMIN_EMAIL ?? "";
     const traccarAdminPassword = process.env.TRACCAR_ADMIN_PASSWORD ?? "";
 
@@ -283,20 +292,24 @@ export async function getOrCreateVeloTrackRuntime() {
     const smsGatewayToken = process.env.SMS_GATEWAY_TOKEN ?? "";
     const smsWebhookSecret = process.env.SMS_WEBHOOK_SECRET ?? "";
 
-    let dbAdapter;
-    if (supabaseDbUrl && !supabaseDbUrl.includes("replace_with")) {
-      dbAdapter = new SupabaseDatabaseAdapter({
-        connectionString: supabaseDbUrl,
-        ssl: process.env.SUPABASE_DB_SSL !== "false"
-      });
-    } else {
-      const { PGlite } = await import("@electric-sql/pglite");
-      const dataDir = process.env.VERCEL
-        ? "/tmp/velotrack-supabase-pg"
-        : path.resolve(process.cwd(), ".velotrack-supabase-pg");
-      const pglite = new PGlite(dataDir);
-      dbAdapter = new SupabaseDatabaseAdapter({ pglite });
+    if (
+      !supabaseUrl ||
+      !supabaseAnonKey ||
+      !supabaseServiceRoleKey ||
+      !supabaseDbUrl ||
+      !supabaseJwtSecret ||
+      supabaseDbUrl.includes("replace_with") ||
+      supabaseJwtSecret.includes("replace_with")
+    ) {
+      throw new Error("SUPABASE_PRODUCTION_CONFIGURATION_INCOMPLETE");
     }
+    if (!traccarBaseUrl || !traccarAdminEmail || !traccarAdminPassword) {
+      throw new Error("TRACCAR_CONNECTION_CONFIGURATION_INCOMPLETE");
+    }
+    const dbAdapter = new SupabaseDatabaseAdapter({
+      connectionString: supabaseDbUrl,
+      ssl: process.env.SUPABASE_DB_SSL !== "false"
+    });
 
     await dbAdapter.applySchemaMigration();
 
@@ -345,27 +358,21 @@ export async function getOrCreateVeloTrackRuntime() {
       smsGateway
     });
 
-    const initialAdminEmail =
-      process.env.VELOTRACK_INITIAL_ADMIN_EMAIL ?? "admin@velotrack.local";
-    const initialAdminUsername = process.env.VELOTRACK_INITIAL_ADMIN_USERNAME ?? "admin";
-    const initialAdminPassword =
-      process.env.VELOTRACK_INITIAL_ADMIN_PASSWORD ?? "Admin@123456";
+    const initialAdminEmail = process.env.VELOTRACK_INITIAL_ADMIN_EMAIL ?? "";
+    const initialAdminUsername = process.env.VELOTRACK_INITIAL_ADMIN_USERNAME ?? "";
+    const initialAdminPassword = process.env.VELOTRACK_INITIAL_ADMIN_PASSWORD ?? "";
+    const initialAdminPhone = process.env.VELOTRACK_INITIAL_ADMIN_PHONE ?? "";
+
+    if (!initialAdminEmail || !initialAdminUsername || !initialAdminPassword || !initialAdminPhone) {
+      throw new Error("VELOTRACK_INITIAL_ADMIN_CONFIGURATION_INCOMPLETE");
+    }
 
     await engine.bootstrapInitialAdminIfNeeded({
       adminEmail: initialAdminEmail,
       adminUsername: initialAdminUsername,
-      adminPassword: initialAdminPassword
+      adminPassword: initialAdminPassword,
+      adminPhone: initialAdminPhone
     });
-
-    // If VELOTRACK_FORCE_PASSWORD_CHANGE is not explicitly "true", allow immediate dashboard login with admin / Admin@123456
-    if (process.env.VELOTRACK_FORCE_PASSWORD_CHANGE !== "true") {
-      await dbAdapter.runSystemTransaction(async (tx) => {
-        await tx.query(
-          `UPDATE public.users_profile SET must_change_password = FALSE WHERE LOWER(username) = LOWER($1)`,
-          [initialAdminUsername]
-        );
-      });
-    }
 
     const requestListener = createVeloTrackRequestListener({
       engine,
