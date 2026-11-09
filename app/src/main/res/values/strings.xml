@@ -1,0 +1,22 @@
+<resources>
+    <string name="app_name">VeloTrack GPS</string>
+    <string name="osm_attribution">© OpenStreetMap contributors</string>
+    <string name="nav_map">Map</string>
+    <string name="nav_activate">Activate</string>
+    <string name="nav_devices">Devices</string>
+    <string name="nav_infra">Server</string>
+    <string name="role_admin">ADMIN</string>
+    <string name="role_customer">CUSTOMER</string>
+    <string name="action_activate_device">Activate Device</string>
+    <string name="action_admin_override">Admin Override</string>
+    <string name="action_reassign_customer">Reassign</string>
+    <string name="action_renew_subscription">Renew</string>
+    <string name="action_route_history">History</string>
+    <string name="status_pending">PENDING</string>
+    <string name="status_sms_sent">SMS SENT</string>
+    <string name="status_waiting_device">WAITING FOR DEVICE</string>
+    <string name="status_activated">ACTIVATED</string>
+    <string name="status_failed">FAILED</string>
+    <string name="sub_expired_banner">Subscription Expired — Live stream &amp; history blocked</string>
+    <string name="sub_awaiting_connection">Starts on 1st Traccar connection</string>
+</resources>
