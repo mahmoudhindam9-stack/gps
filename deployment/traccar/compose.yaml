@@ -1,0 +1,58 @@
+name: velotrack-traccar
+
+services:
+  database:
+    image: ${TRACCAR_DB_IMAGE:-timescale/timescaledb:latest-pg17}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: traccar
+      POSTGRES_USER: traccar
+      POSTGRES_PASSWORD: ${TRACCAR_DB_PASSWORD:?Set TRACCAR_DB_PASSWORD in deployment/traccar/.env}
+      TIMESCALEDB_TELEMETRY: "off"
+    volumes:
+      - traccar-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traccar -d traccar"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - traccar-private
+
+  traccar:
+    image: ${TRACCAR_IMAGE:-traccar/traccar:6.17.0}
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      CONFIG_USE_ENVIRONMENT_VARIABLES: "true"
+      DATABASE_DRIVER: org.postgresql.Driver
+      DATABASE_URL: jdbc:postgresql://database:5432/traccar
+      DATABASE_USER: traccar
+      DATABASE_PASSWORD: ${TRACCAR_DB_PASSWORD:?Set TRACCAR_DB_PASSWORD in deployment/traccar/.env}
+    ports:
+      # Keep the web UI and REST API private. Access through SSH tunnel or a secured backend/proxy.
+      - "127.0.0.1:8082:8082"
+      # GT06 / Concox GT06N protocol listener.
+      - "${GT06_BIND_ADDRESS:-0.0.0.0}:5023:5023/tcp"
+    volumes:
+      - traccar-logs:/opt/traccar/logs
+      - ./traccar.xml:/opt/traccar/conf/traccar.xml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8082/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    networks:
+      - traccar-private
+
+networks:
+  traccar-private:
+    driver: bridge
+
+volumes:
+  traccar-db-data:
+  traccar-logs:
