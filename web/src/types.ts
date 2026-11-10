@@ -175,6 +175,47 @@ export interface CustomerDetails {
   vehicles: DeviceBundle[];
 }
 
+
+export interface FleetEvent {
+  id: number;
+  type: string;
+  eventTime: string | null;
+  deviceId: string;
+  vehicleName: string;
+  geofenceId: number | null;
+  positionId: number | null;
+  attributes: Record<string, unknown>;
+}
+export interface FleetGeofence {
+  id: number;
+  name: string;
+  description: string;
+  area: string;
+  deviceIds: string[];
+  vehicleNames: string[];
+}
+export interface FleetTelemetry {
+  deviceId: string;
+  vehicleName: string;
+  reportedAtMs: number | null;
+  values: Record<string, string | number | boolean>;
+}
+export interface FleetMileageSummary {
+  deviceId: string;
+  vehicleName: string;
+  distanceKm: number | null;
+  maxSpeedKmh: number | null;
+  averageSpeedKmh: number | null;
+  spentFuelLiters: number | null;
+  engineHours: number | null;
+}
+export interface DeviceShareLink {
+  deviceId: string;
+  vehicleName: string;
+  shareUrl: string;
+  expiresAt: string;
+}
+
 export interface Health {
   status: string;
   version?: string;
@@ -213,5 +254,6 @@ export type Page =
   | "customer_details"
   | "profiles"
   | "reports"
+  | "fleet_tools"
   | "system";
 

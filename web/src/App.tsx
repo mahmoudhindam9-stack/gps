@@ -57,6 +57,7 @@ import type {
 } from "./types";
 import MapPanel, { getVehicleSvgMarkup, VEHICLE_ICON_OPTIONS } from "./components/MapPanel";
 import BarcodeScannerModal, { isValidImei15 } from "./components/BarcodeScannerModal";
+import FleetOperationsPage from "./components/FleetOperationsPage";
 
 const pageNames: Record<Page, string> = {
   overview: "نظرة عامة",
@@ -67,6 +68,7 @@ const pageNames: Record<Page, string> = {
   customer_details: "تفاصيل العميل",
   profiles: "ملفات الأجهزة",
   reports: "سجل الحركة",
+  fleet_tools: "مركز الأسطول",
   system: "حالة النظام"
 };
 
@@ -1035,6 +1037,7 @@ export default function App() {
     { id: "customers" as Page, label: "المستخدمون والعملاء", icon: Users, admin: true },
     { id: "profiles" as Page, label: "ملفات الأجهزة", icon: Boxes, admin: true },
     { id: "reports" as Page, label: "سجل الحركة", icon: FileClock },
+    { id: "fleet_tools" as Page, label: "مركز الأسطول", icon: Activity },
     { id: "system" as Page, label: "حالة النظام", icon: Settings2, admin: true }
   ].filter((x) => !x.admin || isAdmin);
 
@@ -2050,6 +2053,11 @@ export default function App() {
                 )}
               </section>
             </>
+          )}
+
+
+          {page === "fleet_tools" && session && (
+            <FleetOperationsPage token={session.token} devices={devices} isAdmin={isAdmin} onNotify={notify} />
           )}
 
           {page === "system" && (

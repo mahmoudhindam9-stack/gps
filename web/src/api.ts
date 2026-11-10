@@ -4,6 +4,11 @@ import type {
   DeviceCommandLog,
   DeviceCommandType,
   DeviceProfile,
+  DeviceShareLink,
+  FleetEvent,
+  FleetGeofence,
+  FleetMileageSummary,
+  FleetTelemetry,
   GitHubReleaseInfo,
   Health,
   RoutePoint,
@@ -382,6 +387,32 @@ export const api = {
       {},
       token
     ),
+
+  fleetEvents: (token: string, from: string, to: string, deviceId?: string) => {
+    const params = new URLSearchParams({ from, to });
+    if (deviceId) params.set("deviceId", deviceId);
+    return request<FleetEvent[]>("/api/v1/events?" + params.toString(), {}, token);
+  },
+  mileageSummary: (token: string, from: string, to: string, deviceId?: string) => {
+    const params = new URLSearchParams({ from, to });
+    if (deviceId) params.set("deviceId", deviceId);
+    return request<FleetMileageSummary[]>("/api/v1/reports/summary?" + params.toString(), {}, token);
+  },
+  fleetTelemetry: (token: string, deviceId?: string) => {
+    const params = new URLSearchParams();
+    if (deviceId) params.set("deviceId", deviceId);
+    const query = params.toString();
+    return request<FleetTelemetry[]>("/api/v1/telemetry" + (query ? "?" + query : ""), {}, token);
+  },
+  geofences: (token: string) => request<FleetGeofence[]>("/api/v1/geofences", {}, token),
+  createGeofence: (token: string, input: { name: string; description?: string; area: string; deviceIds: string[] }) =>
+    request<FleetGeofence>("/api/v1/geofences", { method: "POST", body: JSON.stringify(input) }, token),
+  deleteGeofence: (token: string, id: number) =>
+    request<{ id: number; deleted: boolean }>("/api/v1/geofences/" + encodeURIComponent(String(id)), { method: "DELETE" }, token),
+  createDeviceShare: (token: string, deviceId: string, expiresInHours: number) =>
+    request<DeviceShareLink>("/api/v1/devices/" + encodeURIComponent(deviceId) + "/share", {
+      method: "POST", body: JSON.stringify({ expiresInHours })
+    }, token),
   syncTraccar: (token: string) => request("/api/v1/admin/traccar/sync", { method: "POST" }, token),
   checkUpdate: async (autoUpdateEnabled = true): Promise<GitHubReleaseInfo> => {
     try {
