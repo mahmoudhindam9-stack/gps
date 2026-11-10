@@ -1,0 +1,40 @@
+# Docker Compose override for an existing official self-hosted Supabase stack on the VPS.
+# Usage on VPS inside your existing Supabase docker directory:
+#   docker compose -f docker-compose.yml -f /path/to/gps/deployment/supabase/compose.velotrack-shared.override.yaml up -d
+
+services:
+  db:
+    ports: !reset []
+    networks:
+      default:
+      velotrack-shared:
+        aliases:
+          - supabase-db
+
+  auth:
+    networks:
+      default:
+      velotrack-shared:
+        aliases:
+          - supabase-auth
+
+  rest:
+    networks:
+      default:
+      velotrack-shared:
+        aliases:
+          - supabase-rest
+
+  kong:
+    ports: !override
+      - "127.0.0.1:8000:8000/tcp"
+    networks:
+      default:
+      velotrack-shared:
+        aliases:
+          - supabase-kong
+
+networks:
+  velotrack-shared:
+    external: true
+    name: velotrack-shared

@@ -353,21 +353,8 @@ export class SupabaseAuthService {
       if (error || !data?.user?.id) {
         throw new Error(`SUPABASE_AUTH_CREATE_FAILED:${error?.message ?? "unknown"}`);
       }
-      // Ensure `auth.users` row is mirrored if database is accessed directly
-      await this.dbAdapter.runSystemTransaction(async (tx) => {
-        await tx.query(
-          `INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data)
-           VALUES ($1, $2, $3, NOW(), $4::jsonb, $5::jsonb)
-           ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, updated_at = NOW()`,
-          [
-            data.user.id,
-            cleanEmail,
-            hashPassword(password),
-            JSON.stringify({ role, username }),
-            JSON.stringify({ username })
-          ]
-        );
-      });
+      // Supabase Auth owns auth.users and password hashing. Never write encrypted_password
+      // directly: doing so would overwrite Supabase's bcrypt hash with an incompatible hash.
       return { id: data.user.id, email: cleanEmail };
     }
 
@@ -420,6 +407,7 @@ export class SupabaseAuthService {
       if (error) {
         throw new Error(`SUPABASE_AUTH_PASSWORD_UPDATE_FAILED:${error.message}`);
       }
+      return;
     }
     await this.dbAdapter.runSystemTransaction(async (tx) => {
       await tx.query(

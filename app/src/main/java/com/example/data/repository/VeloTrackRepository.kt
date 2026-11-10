@@ -325,92 +325,52 @@ class VeloTrackRepository(
         )
         return runCatching {
             dao.purgeLegacyDemoCache()
-            val remoteResult = runCatching {
-                apiProvider().login(
-                    LoginRequestDto(
-                        identifier = cleanIdentifier,
-                        email = cleanIdentifier,
-                        password = password
-                    )
+            val response = apiProvider().login(
+                LoginRequestDto(
+                    identifier = cleanIdentifier,
+                    email = cleanIdentifier,
+                    password = password
                 )
-            }
-            val response = remoteResult.getOrNull()
-            if (response != null && response.isSuccessful && response.body() != null) {
-                val body = response.body()!!
-                val role = runCatching { UserRole.valueOf(body.user.role) }.getOrDefault(UserRole.CUSTOMER)
-                val mustChange = body.mustChangePassword || body.user.mustChangePassword
-                val authSession = AuthenticatedSession(
-                    token = body.token,
-                    userId = body.user.id,
-                    username = body.user.username,
-                    email = body.user.email,
-                    fullName = body.user.fullName,
-                    role = role,
-                    mustChangePassword = mustChange
-                )
-                VeloTrackNetworkClient.bearerToken = body.token
-                _session.value = authSession
-                _serverStatus.value = _serverStatus.value.copy(
-                    connectionState = BackendConnectionState.CONNECTED,
-                    supabaseConnected = true,
-                    lastErrorMessage = null
-                )
-                if (!mustChange) {
-                    refreshSnapshotFromServer()
-                    connectLiveStream()
-                }
-                return@runCatching authSession
-            }
-
-            if (response != null && response.code() == 401) {
-                throw IllegalStateException("Invalid credentials")
-            }
-
-            // Local Room-backed bootstrap verification when remote Vercel URL is not yet reachable from emulator
-            val isBootstrapAdmin =
-                (cleanIdentifier.equals("admin", ignoreCase = true) ||
-                    cleanIdentifier.equals("admin@velotrack.local", ignoreCase = true)) &&
-                    password == "Admin@123456"
-
-            if (!isBootstrapAdmin) {
-                throw IllegalStateException("Invalid credentials")
-            }
-
-            val adminEntity = UserProfileEntity(
-                id = "00000000-0000-4000-8000-000000000001",
-                username = "admin",
-                email = "admin@velotrack.local",
-                phone = "+201000000000",
-                fullName = "System Administrator",
-                role = UserRole.ADMIN.name,
-                mustChangePassword = false,
-                isActive = true,
-                createdAt = System.currentTimeMillis()
             )
-            dao.insertUsers(listOf(adminEntity))
-
+            if (!response.isSuccessful || response.body() == null) {
+                val code = response.code()
+                throw IllegalStateException(
+                    if (code == 401) "Invalid credentials" else "Authentication failed (HTTP $code)"
+                )
+            }
+            val body = response.body()!!
+            val role = runCatching { UserRole.valueOf(body.user.role) }.getOrDefault(UserRole.CUSTOMER)
+            val mustChange = body.mustChangePassword || body.user.mustChangePassword
             val authSession = AuthenticatedSession(
-                token = "supabase_admin_bootstrap_session",
-                userId = adminEntity.id,
-                username = adminEntity.username,
-                email = adminEntity.email,
-                fullName = adminEntity.fullName,
-                role = UserRole.ADMIN,
-                mustChangePassword = false
+                token = body.token,
+                userId = body.user.id,
+                username = body.user.username,
+                email = body.user.email,
+                fullName = body.user.fullName,
+                role = role,
+                mustChangePassword = mustChange
             )
-            VeloTrackNetworkClient.bearerToken = authSession.token
+            VeloTrackNetworkClient.bearerToken = body.token
             _session.value = authSession
             _serverStatus.value = _serverStatus.value.copy(
                 connectionState = BackendConnectionState.CONNECTED,
                 supabaseConnected = true,
                 lastErrorMessage = null
             )
+            if (!mustChange) {
+                refreshSnapshotFromServer()
+                connectLiveStream()
+            }
             authSession
         }.onFailure { err ->
             VeloTrackNetworkClient.bearerToken = null
             _session.value = null
             _serverStatus.value = _serverStatus.value.copy(
-                connectionState = BackendConnectionState.DISCONNECTED,
+                connectionState = if (err.message == "Invalid credentials") {
+                    BackendConnectionState.UNAUTHORIZED
+                } else {
+                    BackendConnectionState.DISCONNECTED
+                },
                 lastErrorMessage = err.message
             )
         }

@@ -321,7 +321,7 @@ interface VeloTrackApiService {
 
 object VeloTrackNetworkClient {
     private const val DEFAULT_PUBLIC_HTTPS_API =
-        "https://ais-dev-pyvkwycypjqouw4m3akizc-224077296538.europe-west2.run.app/"
+        "https://api.velotrack.local/"
 
     @Volatile
     var bearerToken: String? = null

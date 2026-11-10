@@ -48,10 +48,14 @@ services:
       start_period: 90s
     networks:
       - traccar-private
+      - velotrack-shared
 
 networks:
   traccar-private:
     driver: bridge
+  velotrack-shared:
+    external: true
+    name: velotrack-shared
 
 volumes:
   traccar-db-data:

@@ -53,11 +53,14 @@ RETURNS TEXT
 LANGUAGE sql
 STABLE
 AS $$
-    SELECT COALESCE(
-        NULLIF(current_setting('request.jwt.claim.role', true), ''),
-        (NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'user_role'),
-        'CUSTOMER'
-    );
+    SELECT CASE
+        WHEN current_user = 'service_role' THEN 'ADMIN'
+        ELSE COALESCE(
+            NULLIF(current_setting('request.jwt.claim.role', true), ''),
+            (NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'user_role'),
+            'CUSTOMER'
+        )
+    END;
 $$;
 
 -- 1. Permanent User Profile Table linked to Supabase `auth.users`

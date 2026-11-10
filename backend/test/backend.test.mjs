@@ -493,3 +493,112 @@ test("3. Full-stack Supabase RLS tenant isolation, SMS state transitions, Tracca
   await new Promise((resolve) => traccarHttp.close(resolve));
   await db.close();
 });
+
+test("4. PR #2 production hardening: fail-closed startup validation, /api/v1/health 200 vs 503 DB check, and GoTrue password hash preservation", async () => {
+  const { getOrCreateVeloTrackRuntime, createVeloTrackRequestListener } = await import(
+    "../src/server.mjs"
+  );
+
+  // 1) Fail closed when production Supabase env vars are missing
+  await assert.rejects(
+    () => getOrCreateVeloTrackRuntime(),
+    /SUPABASE_PRODUCTION_CONFIGURATION_INCOMPLETE/
+  );
+
+  // 2) Verify Traccar private Docker DNS (`http://traccar:8082`) is accepted
+  const sharedNetTraccar = new TraccarBridgeClient({
+    baseUrl: "http://traccar:8082",
+    adminEmail: "admin@velotrack.local",
+    adminPassword: "secret",
+    deploymentMode: "vps_local"
+  });
+  assert.equal(sharedNetTraccar.baseUrl, "http://traccar:8082");
+
+  // 3) Verify /api/v1/health returns 200 OK when DB is reachable and 503 DEGRADED when DB fails
+  const pglite = new PGlite();
+  const db = new SupabaseDatabaseAdapter({ pglite });
+  await db.applySchemaMigration();
+
+  const authService = new SupabaseAuthService({
+    supabaseJwtSecret: TEST_JWT_SECRET,
+    dbAdapter: db
+  });
+  const engine = new VeloTrackEngine({
+    dbAdapter: db,
+    authService,
+    traccarClient: sharedNetTraccar,
+    smsGateway: { async sendSms() { return { gatewayMessageId: "m1", initialStatus: "ACCEPTED" }; } }
+  });
+
+  const listener = createVeloTrackRequestListener({
+    engine,
+    authService,
+    traccarClient: sharedNetTraccar
+  });
+  const server = http.createServer(listener);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+
+  const healthyRes = await fetch(`http://127.0.0.1:${port}/api/v1/health`);
+  assert.equal(healthyRes.status, 200);
+  const healthyBody = await healthyRes.json();
+  assert.equal(healthyBody.status, "OK");
+  assert.equal(healthyBody.supabaseConnected, true);
+
+  // Verify adminClient createUser / updateUserById never overwrites auth.users.encrypted_password
+  const goTrueBcryptHash = "$2a$10$GoTrueBcryptHashThatMustNeverBeOverwritten1234567890";
+  const remoteUserId = "11111111-2222-4333-8444-555555555555";
+  await db.runSystemTransaction(async (tx) => {
+    await tx.query(
+      `INSERT INTO auth.users (id, email, encrypted_password) VALUES ($1, $2, $3)`,
+      [remoteUserId, "gotrue@velotrack.local", goTrueBcryptHash]
+    );
+  });
+
+  authService.adminClient = {
+    auth: {
+      admin: {
+        async createUser({ email }) {
+          return { data: { user: { id: remoteUserId, email } }, error: null };
+        },
+        async updateUserById(id, { password }) {
+          assert.equal(id, remoteUserId);
+          assert.equal(password, "UpdatedPassword#2026");
+          return { data: { user: { id } }, error: null };
+        }
+      }
+    }
+  };
+
+  await authService.createAuthUser({
+    email: "gotrue@velotrack.local",
+    password: "InitialPassword#2026",
+    role: "ADMIN",
+    username: "gotrue_admin"
+  });
+  await authService.updateAuthUserPassword({
+    userId: remoteUserId,
+    newPassword: "UpdatedPassword#2026"
+  });
+
+  const storedHashRes = await db.runSystemTransaction(async (tx) =>
+    tx.query(`SELECT encrypted_password FROM auth.users WHERE id = $1`, [remoteUserId])
+  );
+  assert.equal(storedHashRes.rows[0].encrypted_password, goTrueBcryptHash);
+
+  // Close DB and confirm /api/v1/health returns HTTP 503 DEGRADED
+  await db.close();
+  engine.db.runSystemTransaction = async () => {
+    throw new Error("CONNECTION_CLOSED");
+  };
+
+  const degradedRes = await fetch(`http://127.0.0.1:${port}/api/v1/health`);
+  assert.equal(degradedRes.status, 503);
+  const degradedBody = await degradedRes.json();
+  assert.equal(degradedBody.status, "DEGRADED");
+  assert.equal(degradedBody.supabaseConnected, false);
+  assert.equal(degradedBody.databaseError, "CONNECTION_CLOSED");
+
+  await new Promise((resolve) => server.close(resolve));
+});
+
