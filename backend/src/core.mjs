@@ -442,7 +442,11 @@ export class SupabaseDatabaseAdapter {
               CREATE ROLE service_role NOLOGIN BYPASSRLS;
             END IF;
           END
-          $$;
+          $;
+          -- Test-only emulation of Supabase's privileged server role.
+          -- Production Supabase auth schema and grants are never modified here.
+          GRANT USAGE ON SCHEMA auth TO service_role;
+          GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE auth.users TO service_role;
         `);
       }
       await client.exec(sqlText);
