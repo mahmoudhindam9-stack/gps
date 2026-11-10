@@ -395,17 +395,24 @@ export function createVeloTrackRequestListener({
         return sendJson(res, 201, zone, req, corsAllowedOrigins);
       }
 
-      const geofenceDeleteMatch = /^\\/api\\/v1\\/geofences\\/(\\d+)$/.exec(pathname);
-      if (req.method === "DELETE" && geofenceDeleteMatch) {
-        const result = await engine.deleteAuthorizedGeofence(claims, geofenceDeleteMatch[1]);
+      const geofencePrefix = "/api/v1/geofences/";
+      const geofenceId = pathname.startsWith(geofencePrefix)
+        ? pathname.slice(geofencePrefix.length)
+        : "";
+      if (req.method === "DELETE" && geofenceId && /^[0-9]+$/.test(geofenceId)) {
+        const result = await engine.deleteAuthorizedGeofence(claims, geofenceId);
         return sendJson(res, 200, result, req, corsAllowedOrigins);
       }
 
-      const deviceShareMatch = /^\\/api\\/v1\\/devices\\/([^/]+)\\/share$/.exec(pathname);
-      if (req.method === "POST" && deviceShareMatch) {
+      const devicePrefix = "/api/v1/devices/";
+      const shareSuffix = "/share";
+      const shareDeviceId = pathname.startsWith(devicePrefix) && pathname.endsWith(shareSuffix)
+        ? pathname.slice(devicePrefix.length, -shareSuffix.length)
+        : "";
+      if (req.method === "POST" && shareDeviceId && !shareDeviceId.includes("/")) {
         const body = await readJsonBody(req);
         const result = await engine.createAuthorizedDeviceShare(claims, {
-          deviceId: deviceShareMatch[1],
+          deviceId: shareDeviceId,
           expiresInHours: body.expiresInHours ?? 24
         });
         return sendJson(res, 201, result, req, corsAllowedOrigins);
