@@ -339,7 +339,7 @@ CREATE POLICY rls_devices_customer_update ON public.devices
 CREATE OR REPLACE FUNCTION public.guard_customer_device_updates()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-AS $
+AS $guard$
 BEGIN
     IF public.request_user_role() <> 'ADMIN' AND (
         NEW.imei IS DISTINCT FROM OLD.imei OR
@@ -366,7 +366,7 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$;
+$guard$;
 
 DROP TRIGGER IF EXISTS trg_guard_customer_device_updates ON public.devices;
 CREATE TRIGGER trg_guard_customer_device_updates
