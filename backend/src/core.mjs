@@ -433,7 +433,7 @@ export class SupabaseDatabaseAdapter {
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           );
-          DO $$
+          DO $pglite_setup$
           BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'authenticated') THEN
               CREATE ROLE authenticated NOLOGIN;
@@ -442,7 +442,7 @@ export class SupabaseDatabaseAdapter {
               CREATE ROLE service_role NOLOGIN BYPASSRLS;
             END IF;
           END
-          $;
+          $pglite_setup$;
           -- Test-only emulation of Supabase's privileged server role.
           -- Production Supabase auth schema and grants are never modified here.
           GRANT USAGE ON SCHEMA auth TO service_role;

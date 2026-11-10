@@ -11,10 +11,6 @@ on:
       - "backend/**"
       - ".github/workflows/backend-test.yml"
 
-concurrency:
-  group: backend-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
