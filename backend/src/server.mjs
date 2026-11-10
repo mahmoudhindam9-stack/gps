@@ -358,6 +358,59 @@ export function createVeloTrackRequestListener({
         return sendJson(res, 200, result, req, corsAllowedOrigins);
       }
 
+
+      if (req.method === "GET" && pathname === "/api/v1/events") {
+        const events = await engine.getAuthorizedFleetEvents(claims, {
+          deviceId: url.searchParams.get("deviceId"),
+          fromIso: url.searchParams.get("from") ?? new Date(Date.now() - 7 * 86400000).toISOString(),
+          toIso: url.searchParams.get("to") ?? new Date().toISOString()
+        });
+        return sendJson(res, 200, events, req, corsAllowedOrigins);
+      }
+
+      if (req.method === "GET" && pathname === "/api/v1/reports/summary") {
+        const report = await engine.getAuthorizedMileageSummary(claims, {
+          deviceId: url.searchParams.get("deviceId"),
+          fromIso: url.searchParams.get("from") ?? new Date(Date.now() - 86400000).toISOString(),
+          toIso: url.searchParams.get("to") ?? new Date().toISOString()
+        });
+        return sendJson(res, 200, report, req, corsAllowedOrigins);
+      }
+
+      if (req.method === "GET" && pathname === "/api/v1/telemetry") {
+        const telemetry = await engine.getAuthorizedFleetTelemetry(
+          claims, url.searchParams.get("deviceId")
+        );
+        return sendJson(res, 200, telemetry, req, corsAllowedOrigins);
+      }
+
+      if (pathname === "/api/v1/geofences" && req.method === "GET") {
+        const zones = await engine.listAuthorizedGeofences(claims);
+        return sendJson(res, 200, zones, req, corsAllowedOrigins);
+      }
+
+      if (pathname === "/api/v1/geofences" && req.method === "POST") {
+        const body = await readJsonBody(req);
+        const zone = await engine.createAuthorizedGeofence(claims, body);
+        return sendJson(res, 201, zone, req, corsAllowedOrigins);
+      }
+
+      const geofenceDeleteMatch = /^\\/api\\/v1\\/geofences\\/(\\d+)$/.exec(pathname);
+      if (req.method === "DELETE" && geofenceDeleteMatch) {
+        const result = await engine.deleteAuthorizedGeofence(claims, geofenceDeleteMatch[1]);
+        return sendJson(res, 200, result, req, corsAllowedOrigins);
+      }
+
+      const deviceShareMatch = /^\\/api\\/v1\\/devices\\/([^/]+)\\/share$/.exec(pathname);
+      if (req.method === "POST" && deviceShareMatch) {
+        const body = await readJsonBody(req);
+        const result = await engine.createAuthorizedDeviceShare(claims, {
+          deviceId: deviceShareMatch[1],
+          expiresInHours: body.expiresInHours ?? 24
+        });
+        return sendJson(res, 201, result, req, corsAllowedOrigins);
+      }
+
       const historyMatch = /^\/api\/v1\/devices\/([^/]+)\/history$/.exec(pathname);
       if (req.method === "GET" && historyMatch) {
         const fromIso =
@@ -444,7 +497,14 @@ export function createVeloTrackRequestListener({
           : msg.endsWith("NOT_FOUND")
           ? 404
           : 400;
-      sendJson(res, status, { error: msg }, req, corsAllowedOrigins);
+      const finalStatus =
+        msg === "TRACCAR_PUBLIC_URL_NOT_CONFIGURED" ||
+        msg === "TRACCAR_PUBLIC_URL_MUST_USE_HTTPS"
+          ? 503
+          : msg.startsWith("TRACCAR_API_REQUEST_FAILED_")
+            ? 502
+            : status;
+      sendJson(res, finalStatus, { error: msg }, req, corsAllowedOrigins);
     }
   };
 }

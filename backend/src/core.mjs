@@ -1020,6 +1020,156 @@ export class TraccarBridgeClient {
     };
   }
 
+
+  /**
+   * Server-owned Traccar REST helper. Callers pass fixed API paths, never absolute URLs.
+   */
+  async requestApi(path, { method = "GET", body, contentType = "application/json" } = {}) {
+    const safePath = String(path ?? "").replace(/^\\/+/, "");
+    if (!safePath || safePath.includes("..") || safePath.includes("://")) {
+      throw new Error("TRACCAR_API_PATH_INVALID");
+    }
+    if (!this.sessionCookie) await this.authenticateSession();
+    const headers = { Accept: "application/json", Cookie: this.sessionCookie };
+    let requestBody;
+    if (body !== undefined) {
+      headers["Content-Type"] = contentType;
+      requestBody = contentType === "application/json" ? JSON.stringify(body) : String(body);
+    }
+    const response = await this.fetchImpl(`${this.baseUrl}/api/${safePath}`, {
+      method,
+      headers,
+      ...(requestBody !== undefined ? { body: requestBody } : {})
+    });
+    if (response.status === 401) {
+      this.sessionCookie = null;
+      throw new Error("TRACCAR_SESSION_EXPIRED");
+    }
+    if (!response.ok && response.status !== 202) {
+      throw new Error(`TRACCAR_API_REQUEST_FAILED_${response.status}`);
+    }
+    if (response.status === 204) return null;
+    const raw = await response.text();
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+
+  _validatedTraccarIds(deviceIds) {
+    const ids = [...new Set((Array.isArray(deviceIds) ? deviceIds : []).map(Number))];
+    if (!ids.length || ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+      throw new Error("TRACCAR_DEVICE_IDS_REQUIRED");
+    }
+    return ids;
+  }
+
+  _reportQuery(deviceIds, fromIso, toIso) {
+    const ids = this._validatedTraccarIds(deviceIds);
+    const fromMs = Date.parse(fromIso);
+    const toMs = Date.parse(toIso);
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+      throw new Error("INVALID_REPORT_WINDOW");
+    }
+    const params = new URLSearchParams();
+    for (const id of ids) params.append("deviceId", String(id));
+    params.set("from", new Date(fromMs).toISOString());
+    params.set("to", new Date(toMs).toISOString());
+    return params;
+  }
+
+  async fetchEvents(deviceIds, fromIso, toIso) {
+    const rows = await this.requestApi("reports/events?" + this._reportQuery(deviceIds, fromIso, toIso));
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async fetchMileageSummary(deviceIds, fromIso, toIso) {
+    const rows = await this.requestApi("reports/summary?" + this._reportQuery(deviceIds, fromIso, toIso));
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async fetchGeofencesForDevice(traccarDeviceId) {
+    const id = Number(traccarDeviceId);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error("TRACCAR_DEVICE_ID_INVALID");
+    const rows = await this.requestApi("geofences?deviceId=" + encodeURIComponent(String(id)));
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async fetchAllGeofences() {
+    const rows = await this.requestApi("geofences?all=true");
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async createGeofence({ name, description = "", area, attributes = {} }) {
+    return this.requestApi("geofences", {
+      method: "POST",
+      body: { name, description, area, attributes }
+    });
+  }
+
+  async fetchGeofencePermissions(geofenceId) {
+    const id = Number(geofenceId);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error("GEOFENCE_ID_INVALID");
+    const rows = await this.requestApi(
+      "permissions?geofenceId=" + encodeURIComponent(String(id)) + "&deviceId=0"
+    );
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async linkGeofenceToDevice(traccarDeviceId, geofenceId) {
+    const deviceId = Number(traccarDeviceId);
+    const zoneId = Number(geofenceId);
+    if (!Number.isSafeInteger(deviceId) || deviceId <= 0 ||
+        !Number.isSafeInteger(zoneId) || zoneId <= 0) {
+      throw new Error("GEOFENCE_PERMISSION_INVALID");
+    }
+    return this.requestApi("permissions", {
+      method: "POST",
+      body: { deviceId, geofenceId: zoneId }
+    });
+  }
+
+  async unlinkGeofenceFromDevice(traccarDeviceId, geofenceId) {
+    const deviceId = Number(traccarDeviceId);
+    const zoneId = Number(geofenceId);
+    if (!Number.isSafeInteger(deviceId) || deviceId <= 0 ||
+        !Number.isSafeInteger(zoneId) || zoneId <= 0) {
+      throw new Error("GEOFENCE_PERMISSION_INVALID");
+    }
+    return this.requestApi("permissions", {
+      method: "DELETE",
+      body: { deviceId, geofenceId: zoneId }
+    });
+  }
+
+  async deleteGeofence(geofenceId) {
+    const id = Number(geofenceId);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error("GEOFENCE_ID_INVALID");
+    return this.requestApi("geofences/" + encodeURIComponent(String(id)), { method: "DELETE" });
+  }
+
+  async createDeviceShare(traccarDeviceId, expiresAtIso) {
+    const id = Number(traccarDeviceId);
+    const expiresAt = new Date(expiresAtIso);
+    if (!Number.isSafeInteger(id) || id <= 0 || !Number.isFinite(expiresAt.getTime())) {
+      throw new Error("DEVICE_SHARE_INPUT_INVALID");
+    }
+    const form = new URLSearchParams({
+      deviceId: String(id),
+      expiration: expiresAt.toISOString()
+    });
+    const token = await this.requestApi("share/device", {
+      method: "POST",
+      body: form.toString(),
+      contentType: "application/x-www-form-urlencoded"
+    });
+    const clean = String(token ?? "").trim().replace(/^"+|"+$/g, "");
+    if (!clean || clean.length > 4096) throw new Error("TRACCAR_SHARE_TOKEN_INVALID");
+    return clean;
+  }
+
   async fetchDevicesAndPositions() {
     if (!this.sessionCookie) {
       await this.authenticateSession();
@@ -1184,6 +1334,7 @@ export class VeloTrackEngine {
     this.authService = authService;
     this.traccarClient = traccarClient;
     this.smsGateway = smsGateway;
+    this.traccarPublicUrl = String(process.env.TRACCAR_PUBLIC_URL ?? "").trim().replace(/\\/+$/, "");
     this._liveListeners = new Set();
     this._expiryTimers = new Map();
   }
@@ -3288,6 +3439,294 @@ export class VeloTrackEngine {
       throw new Error("SUBSCRIPTION_EXPIRED");
     }
     return this.traccarClient.fetchRouteHistory(device.traccarDeviceId, fromIso, toIso);
+  }
+
+
+  _assertFleetReportWindow(fromIso, toIso) {
+    const fromMs = Date.parse(fromIso);
+    const toMs = Date.parse(toIso);
+    const maxWindowMs = 90 * 24 * 60 * 60 * 1000;
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) ||
+        toMs <= fromMs || toMs - fromMs > maxWindowMs) {
+      throw new Error("INVALID_REPORT_WINDOW");
+    }
+    return { fromIso: new Date(fromMs).toISOString(), toIso: new Date(toMs).toISOString() };
+  }
+
+  async _resolveAuthorizedFleetBundles(actorClaims, deviceId = null) {
+    if (!actorClaims || !["ADMIN", "CUSTOMER"].includes(actorClaims.role)) {
+      throw new Error("FORBIDDEN_DEVICE_ACCESS");
+    }
+    const bundles = await this.listAuthorizedDevices(actorClaims);
+    const isSubscriptionActive = (bundle) =>
+      bundle.subscription?.status === "ACTIVE" &&
+      (bundle.subscription.planDuration === "LIFETIME" ||
+        (bundle.subscription.expiresAtMs ?? 0) > Date.now());
+
+    if (deviceId) {
+      const requestedId = String(deviceId);
+      const found = bundles.find((bundle) => bundle.device.id === requestedId);
+      if (!found) {
+        const existsInSystem = await this.db.runSystemTransaction(async (tx) => {
+          const result = await tx.query("SELECT id FROM public.devices WHERE id = $1", [requestedId]);
+          return result.rows.length > 0;
+        });
+        if (existsInSystem) throw new Error("FORBIDDEN_TENANT_ISOLATION");
+        throw new Error("DEVICE_NOT_FOUND");
+      }
+      if (actorClaims.role !== "ADMIN" && !isSubscriptionActive(found)) {
+        throw new Error("SUBSCRIPTION_EXPIRED");
+      }
+      return [found];
+    }
+
+    return bundles.filter((bundle) => actorClaims.role === "ADMIN" || isSubscriptionActive(bundle));
+  }
+
+  async getAuthorizedFleetEvents(actorClaims, { deviceId = null, fromIso, toIso }) {
+    const window = this._assertFleetReportWindow(fromIso, toIso);
+    const bundles = await this._resolveAuthorizedFleetBundles(actorClaims, deviceId);
+    if (!bundles.length) return [];
+    const deviceMap = new Map(bundles.map((bundle) => [Number(bundle.device.traccarDeviceId), bundle]));
+    const rows = await this.traccarClient.fetchEvents(
+      [...deviceMap.keys()], window.fromIso, window.toIso
+    );
+    return rows
+      .filter((event) => deviceMap.has(Number(event.deviceId)))
+      .map((event) => {
+        const bundle = deviceMap.get(Number(event.deviceId));
+        return {
+          id: Number(event.id),
+          type: String(event.type ?? "unknown"),
+          eventTime: event.eventTime ?? null,
+          deviceId: bundle.device.id,
+          vehicleName: bundle.device.vehicleName,
+          geofenceId: event.geofenceId ?? null,
+          positionId: event.positionId ?? null,
+          attributes: event.attributes && typeof event.attributes === "object"
+            ? event.attributes
+            : {}
+        };
+      })
+      .sort((a, b) => Date.parse(b.eventTime ?? 0) - Date.parse(a.eventTime ?? 0));
+  }
+
+  async getAuthorizedMileageSummary(actorClaims, { deviceId = null, fromIso, toIso }) {
+    const window = this._assertFleetReportWindow(fromIso, toIso);
+    const bundles = await this._resolveAuthorizedFleetBundles(actorClaims, deviceId);
+    if (!bundles.length) return [];
+    const deviceMap = new Map(bundles.map((bundle) => [Number(bundle.device.traccarDeviceId), bundle]));
+    const rows = await this.traccarClient.fetchMileageSummary(
+      [...deviceMap.keys()], window.fromIso, window.toIso
+    );
+    return rows
+      .filter((row) => deviceMap.has(Number(row.deviceId)))
+      .map((row) => {
+        const bundle = deviceMap.get(Number(row.deviceId));
+        return {
+          deviceId: bundle.device.id,
+          vehicleName: bundle.device.vehicleName,
+          distanceKm: Number.isFinite(Number(row.distance))
+            ? Number((Number(row.distance) / 1000).toFixed(2))
+            : null,
+          maxSpeedKmh: Number.isFinite(Number(row.maxSpeed))
+            ? Number((Number(row.maxSpeed) * 1.852).toFixed(2))
+            : null,
+          averageSpeedKmh: Number.isFinite(Number(row.averageSpeed))
+            ? Number((Number(row.averageSpeed) * 1.852).toFixed(2))
+            : null,
+          spentFuelLiters: Number.isFinite(Number(row.spentFuel))
+            ? Number(Number(row.spentFuel).toFixed(2))
+            : null,
+          engineHours: Number.isFinite(Number(row.engineHours)) ? Number(row.engineHours) : null
+        };
+      });
+  }
+
+  async getAuthorizedFleetTelemetry(actorClaims, deviceId = null) {
+    const bundles = await this._resolveAuthorizedFleetBundles(actorClaims, deviceId);
+    if (!bundles.length) return [];
+    const snapshot = await this.traccarClient.fetchDevicesAndPositions();
+    const allowedIds = new Set(bundles.map((bundle) => Number(bundle.device.traccarDeviceId)));
+    const traccarDevices = new Map(
+      (snapshot.devices ?? []).filter((item) => allowedIds.has(Number(item.id)))
+        .map((item) => [Number(item.id), item])
+    );
+    const positions = new Map(
+      (snapshot.positions ?? []).filter((item) => allowedIds.has(Number(item.deviceId)))
+        .map((item) => [Number(item.deviceId), item])
+    );
+    const safeAttribute = /^(battery(level)?|power|external(power|voltage)|fuel(level|percentage|consumption)?|odometer|totaldistance|distance|temperature[0-9]*|door|ignition|motion|alarm|sat(ellites)?|rssi|gsmsignal|charge|charging|voltage|enginehours)$/i;
+    return bundles.map((bundle) => {
+      const id = Number(bundle.device.traccarDeviceId);
+      const traccarDevice = traccarDevices.get(id) ?? {};
+      const position = positions.get(id) ?? {};
+      const source = {
+        ...(traccarDevice.attributes && typeof traccarDevice.attributes === "object"
+          ? traccarDevice.attributes : {}),
+        ...(position.attributes && typeof position.attributes === "object"
+          ? position.attributes : {})
+      };
+      const values = {};
+      for (const [key, value] of Object.entries(source)) {
+        if (safeAttribute.test(key) &&
+            (typeof value === "string" || typeof value === "number" || typeof value === "boolean") &&
+            !(typeof value === "number" && !Number.isFinite(value))) values[key] = value;
+      }
+      const reportedAt = position.fixTime ?? position.serverTime ?? position.deviceTime ?? null;
+      return {
+        deviceId: bundle.device.id,
+        vehicleName: bundle.device.vehicleName,
+        reportedAtMs: reportedAt ? Date.parse(reportedAt) || null : null,
+        values
+      };
+    });
+  }
+
+  async listAuthorizedGeofences(actorClaims) {
+    const bundles = await this._resolveAuthorizedFleetBundles(actorClaims);
+    const zones = new Map();
+    for (const bundle of bundles) {
+      const rows = await this.traccarClient.fetchGeofencesForDevice(bundle.device.traccarDeviceId);
+      for (const row of rows) {
+        const id = Number(row.id);
+        if (!Number.isSafeInteger(id) || id <= 0) continue;
+        const zone = zones.get(id) ?? {
+          id,
+          name: String(row.name ?? "منطقة جغرافية"),
+          description: String(row.description ?? ""),
+          area: String(row.area ?? ""),
+          deviceIds: [],
+          vehicleNames: []
+        };
+        if (!zone.deviceIds.includes(bundle.device.id)) {
+          zone.deviceIds.push(bundle.device.id);
+          zone.vehicleNames.push(bundle.device.vehicleName);
+        }
+        zones.set(id, zone);
+      }
+    }
+    return [...zones.values()].sort((a, b) => a.name.localeCompare(b.name, "ar"));
+  }
+
+  _validateGeofenceInput({ name, description = "", area }) {
+    const cleanName = String(name ?? "").trim();
+    const cleanDescription = String(description ?? "").trim();
+    const cleanArea = String(area ?? "").trim();
+    if (!cleanName || cleanName.length > 100 || cleanDescription.length > 500 ||
+        cleanArea.length > 12000) throw new Error("INVALID_GEOFENCE_INPUT");
+
+    const circle = /^CIRCLE\\s*\\(\\s*([-+]?\\d+(?:\\.\\d+)?)\\s+([-+]?\\d+(?:\\.\\d+)?)\\s*,\\s*(\\d+(?:\\.\\d+)?)\\s*\\)$/i.exec(cleanArea);
+    if (circle) {
+      const lon = Number(circle[1]), lat = Number(circle[2]), radius = Number(circle[3]);
+      if (Math.abs(lon) > 180 || Math.abs(lat) > 90 || radius <= 0 || radius > 1000000) {
+        throw new Error("INVALID_GEOFENCE_INPUT");
+      }
+      return { name: cleanName, description: cleanDescription, area: cleanArea };
+    }
+
+    const polygon = /^POLYGON\\s*\\(\\(([^()]+)\\)\\)$/i.exec(cleanArea);
+    if (polygon) {
+      const points = polygon[1].split(",").map((part) => part.trim().split(/\\s+/).map(Number));
+      if (points.length < 4 || points.some((point) =>
+        point.length !== 2 || point.some((value) => !Number.isFinite(value)) ||
+        Math.abs(point[0]) > 180 || Math.abs(point[1]) > 90
+      )) throw new Error("INVALID_GEOFENCE_INPUT");
+      const first = points[0], last = points[points.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) throw new Error("INVALID_GEOFENCE_INPUT");
+      return { name: cleanName, description: cleanDescription, area: cleanArea };
+    }
+    throw new Error("INVALID_GEOFENCE_INPUT");
+  }
+
+  async createAuthorizedGeofence(actorClaims, input) {
+    if (actorClaims.role !== "ADMIN") throw new Error("FORBIDDEN_ADMIN_ONLY");
+    await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      await this._assertActiveAndPasswordUpdated(tx, actorClaims);
+    });
+    const normalized = this._validateGeofenceInput(input ?? {});
+    const requestedIds = [...new Set(
+      (Array.isArray(input?.deviceIds) ? input.deviceIds : []).map((id) => String(id))
+    )].filter(Boolean);
+    if (!requestedIds.length || requestedIds.length > 50) throw new Error("INVALID_GEOFENCE_INPUT");
+    const bundles = await this._resolveAuthorizedFleetBundles(actorClaims);
+    const selected = bundles.filter((bundle) => requestedIds.includes(bundle.device.id));
+    if (selected.length !== requestedIds.length) throw new Error("DEVICE_NOT_FOUND");
+
+    const zone = await this.traccarClient.createGeofence({
+      ...normalized,
+      attributes: { source: "velotrack" }
+    });
+    const zoneId = Number(zone?.id);
+    if (!Number.isSafeInteger(zoneId) || zoneId <= 0) {
+      throw new Error("TRACCAR_GEOFENCE_CREATE_FAILED");
+    }
+    const linked = [];
+    try {
+      for (const bundle of selected) {
+        await this.traccarClient.linkGeofenceToDevice(bundle.device.traccarDeviceId, zoneId);
+        linked.push(bundle.device.traccarDeviceId);
+      }
+    } catch {
+      for (const traccarDeviceId of linked) {
+        await this.traccarClient.unlinkGeofenceFromDevice(traccarDeviceId, zoneId).catch(() => {});
+      }
+      await this.traccarClient.deleteGeofence(zoneId).catch(() => {});
+      throw new Error("TRACCAR_GEOFENCE_ASSIGN_FAILED");
+    }
+    return {
+      id: zoneId,
+      ...normalized,
+      deviceIds: selected.map((bundle) => bundle.device.id),
+      vehicleNames: selected.map((bundle) => bundle.device.vehicleName)
+    };
+  }
+
+  async deleteAuthorizedGeofence(actorClaims, geofenceId) {
+    if (actorClaims.role !== "ADMIN") throw new Error("FORBIDDEN_ADMIN_ONLY");
+    await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      await this._assertActiveAndPasswordUpdated(tx, actorClaims);
+    });
+    const id = Number(geofenceId);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error("GEOFENCE_ID_INVALID");
+    const zones = await this.traccarClient.fetchAllGeofences();
+    if (!zones.some((zone) => Number(zone.id) === id)) throw new Error("GEOFENCE_NOT_FOUND");
+    const permissions = await this.traccarClient.fetchGeofencePermissions(id);
+    for (const permission of permissions) {
+      if (Number(permission.geofenceId) === id && Number(permission.deviceId) > 0) {
+        await this.traccarClient.unlinkGeofenceFromDevice(permission.deviceId, id);
+      }
+    }
+    await this.traccarClient.deleteGeofence(id);
+    return { id, deleted: true };
+  }
+
+  async createAuthorizedDeviceShare(actorClaims, { deviceId, expiresInHours = 24 }) {
+    const bundles = await this._resolveAuthorizedFleetBundles(actorClaims, deviceId);
+    const hours = Number(expiresInHours);
+    if (!Number.isFinite(hours) || hours < 1 || hours > 168) {
+      throw new Error("DEVICE_SHARE_INPUT_INVALID");
+    }
+    let publicUrl;
+    try {
+      publicUrl = new URL(this.traccarPublicUrl);
+    } catch {
+      throw new Error("TRACCAR_PUBLIC_URL_NOT_CONFIGURED");
+    }
+    if (publicUrl.protocol !== "https:" &&
+        !["localhost", "127.0.0.1", "::1"].includes(publicUrl.hostname)) {
+      throw new Error("TRACCAR_PUBLIC_URL_MUST_USE_HTTPS");
+    }
+    const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
+    const token = await this.traccarClient.createDeviceShare(
+      bundles[0].device.traccarDeviceId, expiresAt
+    );
+    return {
+      deviceId: bundles[0].device.id,
+      vehicleName: bundles[0].device.vehicleName,
+      shareUrl: publicUrl.toString().replace(/\\/+$/, "") + "/?token=" + encodeURIComponent(token),
+      expiresAt
+    };
   }
 
   _mapUserRow(row) {
