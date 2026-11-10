@@ -1433,7 +1433,10 @@ export class VeloTrackEngine {
       newPassword
     });
 
-    const updatedRow = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+    // Password validation and Supabase Auth update have succeeded. Use the trusted
+    // server-side transaction for this protected profile flag; customer rows are not
+    // directly updatable by authenticated clients.
+    const updatedRow = await this.db.runSystemTransaction(async (tx) => {
       const res = await tx.query(
         `UPDATE public.users_profile
          SET must_change_password = FALSE,
@@ -1442,6 +1445,7 @@ export class VeloTrackEngine {
          RETURNING id, username, email, phone, full_name, role, must_change_password, is_active, created_at`,
         [actorClaims.userId]
       );
+      if (res.rows.length === 0) throw new Error("AUTH_USER_NOT_FOUND");
       return res.rows[0];
     });
 

@@ -371,6 +371,35 @@ test("3. Full-stack Supabase RLS tenant isolation, SMS state transitions, Tracca
   assert.equal(listA[0].subscription.startedAtMs, null);
   assert.equal(listB.length, 0);
 
+  // Direct authenticated SQL must not let a customer promote their own profile.
+  const roleEscalation = await db.runTenantTransaction(custAClaims, async (tx) =>
+    tx.query(
+      `UPDATE public.users_profile SET role = 'ADMIN' WHERE id = $1 RETURNING role`,
+      [custA.id]
+    )
+  );
+  assert.equal(roleEscalation.rows.length, 0);
+  const profileAfterAttempt = await db.runSystemTransaction(async (tx) =>
+    tx.query(`SELECT role FROM public.users_profile WHERE id = $1`, [custA.id])
+  );
+  assert.equal(profileAfterAttempt.rows[0].role, "CUSTOMER");
+
+  // Customer may edit display metadata but may not change device ownership/identity.
+  const safeVehicleUpdate = await engine.updateVehicleMetadata(custAClaims, deviceId, {
+    vehicleName: "Customer A Updated Van",
+    plateNumber: "CA-102"
+  });
+  assert.equal(safeVehicleUpdate.vehicleName, "Customer A Updated Van");
+  await assert.rejects(
+    () => db.runTenantTransaction(custAClaims, async (tx) =>
+      tx.query(
+        `UPDATE public.devices SET imei = '358739051122333' WHERE id = $1`,
+        [deviceId]
+      )
+    ),
+    /CUSTOMER_DEVICE_PROTECTED_FIELD_UPDATE/
+  );
+
   // Start VeloTrack HTTP + `/ws/live` server and connect Traccar live socket
   const apiServer = createVeloTrackHttpServer({
     engine,

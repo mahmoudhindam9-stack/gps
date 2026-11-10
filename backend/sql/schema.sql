@@ -285,16 +285,11 @@ CREATE POLICY rls_users_profile_select ON public.users_profile
     );
 
 DROP POLICY IF EXISTS rls_users_profile_modify ON public.users_profile;
-CREATE POLICY rls_users_profile_modify ON public.users_profile
+DROP POLICY IF EXISTS rls_users_profile_admin_modify ON public.users_profile;
+CREATE POLICY rls_users_profile_admin_modify ON public.users_profile
     FOR ALL
-    USING (
-        public.request_user_role() = 'ADMIN'
-        OR id = public.request_user_id()
-    )
-    WITH CHECK (
-        public.request_user_role() = 'ADMIN'
-        OR id = public.request_user_id()
-    );
+    USING (public.request_user_role() = 'ADMIN')
+    WITH CHECK (public.request_user_role() = 'ADMIN');
 
 -- Policies for `bootstrap_state` (Admin only)
 DROP POLICY IF EXISTS rls_bootstrap_state_admin ON public.bootstrap_state;
@@ -326,16 +321,58 @@ CREATE POLICY rls_devices_select ON public.devices
 
 DROP POLICY IF EXISTS rls_devices_admin_write ON public.devices;
 DROP POLICY IF EXISTS rls_devices_write ON public.devices;
-CREATE POLICY rls_devices_write ON public.devices
+DROP POLICY IF EXISTS rls_devices_admin_all ON public.devices;
+DROP POLICY IF EXISTS rls_devices_customer_update ON public.devices;
+
+CREATE POLICY rls_devices_admin_all ON public.devices
     FOR ALL
-    USING (
-        public.request_user_role() = 'ADMIN'
-        OR current_customer_id = public.request_user_id()
-    )
-    WITH CHECK (
-        public.request_user_role() = 'ADMIN'
-        OR current_customer_id = public.request_user_id()
-    );
+    USING (public.request_user_role() = 'ADMIN')
+    WITH CHECK (public.request_user_role() = 'ADMIN');
+
+-- Customers may update only their own presentation fields. The trigger below
+-- prevents changing IMEI, ownership, Traccar IDs, SIM, profile, activation, or telemetry.
+CREATE POLICY rls_devices_customer_update ON public.devices
+    FOR UPDATE
+    USING (current_customer_id = public.request_user_id())
+    WITH CHECK (current_customer_id = public.request_user_id());
+
+CREATE OR REPLACE FUNCTION public.guard_customer_device_updates()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $
+BEGIN
+    IF public.request_user_role() <> 'ADMIN' AND (
+        NEW.imei IS DISTINCT FROM OLD.imei OR
+        NEW.serial_number IS DISTINCT FROM OLD.serial_number OR
+        NEW.traccar_device_id IS DISTINCT FROM OLD.traccar_device_id OR
+        NEW.profile_id IS DISTINCT FROM OLD.profile_id OR
+        NEW.current_customer_id IS DISTINCT FROM OLD.current_customer_id OR
+        NEW.sim_local_number IS DISTINCT FROM OLD.sim_local_number OR
+        NEW.sim_e164_number IS DISTINCT FROM OLD.sim_e164_number OR
+        NEW.activation_status IS DISTINCT FROM OLD.activation_status OR
+        NEW.connection_state IS DISTINCT FROM OLD.connection_state OR
+        NEW.has_valid_fix IS DISTINCT FROM OLD.has_valid_fix OR
+        NEW.last_lat IS DISTINCT FROM OLD.last_lat OR
+        NEW.last_lng IS DISTINCT FROM OLD.last_lng OR
+        NEW.last_speed_kmh IS DISTINCT FROM OLD.last_speed_kmh OR
+        NEW.last_heading IS DISTINCT FROM OLD.last_heading OR
+        NEW.ignition_on IS DISTINCT FROM OLD.ignition_on OR
+        NEW.first_connected_at IS DISTINCT FROM OLD.first_connected_at OR
+        NEW.last_seen_at IS DISTINCT FROM OLD.last_seen_at OR
+        NEW.created_at IS DISTINCT FROM OLD.created_at
+    ) THEN
+        RAISE EXCEPTION 'CUSTOMER_DEVICE_PROTECTED_FIELD_UPDATE'
+            USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+END;
+$;
+
+DROP TRIGGER IF EXISTS trg_guard_customer_device_updates ON public.devices;
+CREATE TRIGGER trg_guard_customer_device_updates
+    BEFORE UPDATE ON public.devices
+    FOR EACH ROW
+    EXECUTE FUNCTION public.guard_customer_device_updates();
 
 -- Policies for `activation_sms_logs`
 DROP POLICY IF EXISTS rls_sms_logs_select ON public.activation_sms_logs;
