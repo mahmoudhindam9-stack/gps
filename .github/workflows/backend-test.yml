@@ -1,0 +1,35 @@
+name: VeloTrack Backend Tests
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-test.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Run backend tests
+        run: npm test

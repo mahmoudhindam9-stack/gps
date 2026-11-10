@@ -4,46 +4,9 @@
 -- Additive, forward-only migrations preserving all existing production records.
 -- ============================================================================
 
--- Ensure `auth.users` and roles exist for standalone migration validation
--- (No-op on a live Supabase PostgreSQL instance where `auth.users` and roles exist)
-CREATE SCHEMA IF NOT EXISTS auth;
-
-CREATE TABLE IF NOT EXISTS auth.users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email VARCHAR(255) UNIQUE,
-    phone VARCHAR(32) UNIQUE,
-    encrypted_password TEXT,
-    email_confirmed_at TIMESTAMPTZ,
-    phone_confirmed_at TIMESTAMPTZ,
-    raw_app_meta_data JSONB DEFAULT '{}'::jsonb,
-    raw_user_meta_data JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone VARCHAR(32);
-ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone_confirmed_at TIMESTAMPTZ;
-ALTER TABLE auth.users ALTER COLUMN email DROP NOT NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_users_phone_unique
-    ON auth.users (phone)
-    WHERE phone IS NOT NULL;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'authenticated') THEN
-        CREATE ROLE authenticated NOLOGIN;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'service_role') THEN
-        CREATE ROLE service_role NOLOGIN BYPASSRLS;
-    END IF;
-END
-$$;
-
+-- Supabase owns the `auth` schema and its users table. Never create, alter, or grant
+-- application access to `auth.users`; only reference its primary key from public profiles.
 GRANT USAGE ON SCHEMA public TO authenticated, service_role;
-GRANT USAGE ON SCHEMA auth TO authenticated, service_role;
-GRANT SELECT, REFERENCES ON TABLE auth.users TO authenticated;
-GRANT ALL PRIVILEGES ON TABLE auth.users TO service_role;
 
 -- Helper functions reading per-transaction JWT claims set by Supabase / VeloTrack Backend
 CREATE OR REPLACE FUNCTION public.request_user_id()
@@ -466,10 +429,3 @@ CREATE POLICY rls_device_commands_insert ON public.device_commands
             )
         )
     );
-
--- ============================================================================
--- Surgical Data Cleanup of Known Demo / Seeded Artifacts
--- Removes only known fake prototype records while preserving legitimate data.
--- ============================================================================
-DELETE FROM public.activation_sms_logs
-WHERE gateway_message_id LIKE 'GSM-EG-%';

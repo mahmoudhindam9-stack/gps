@@ -84,6 +84,16 @@ test("1. One-time initial admin bootstrap (username `admin`), mandatory 1st-logi
     });
     assert.equal(changed.mustChangePassword, false);
 
+    // A backend restart must never reset an existing administrator's password.
+    const ensureAfterPasswordChange = await engine1.ensureAdminCredentials({
+      adminEmail: "owner.admin@velotrack.local",
+      adminUsername: "admin",
+      adminPassword: "Admin@123456"
+    });
+    assert.equal(ensureAfterPasswordChange.reason, "ALREADY_BOOTSTRAPPED");
+    await assert.rejects(() => engine1.login("admin", "Admin@123456"), /INVALID_CREDENTIALS/);
+    assert.equal((await engine1.login("admin", "NewStrongAdmin#2026")).user.username, "admin");
+
     // Old temporary password must no longer work
     await assert.rejects(
       () => engine1.login("admin", "Admin@123456"),

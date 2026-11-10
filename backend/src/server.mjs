@@ -551,18 +551,18 @@ export async function getOrCreateVeloTrackRuntime() {
       smsGateway
     });
 
-    const initialAdminEmail = process.env.VELOTRACK_INITIAL_ADMIN_EMAIL || "admin@velotrack.local";
-    const initialAdminUsername = process.env.VELOTRACK_INITIAL_ADMIN_USERNAME || "admin";
-    const initialAdminPassword = process.env.VELOTRACK_INITIAL_ADMIN_PASSWORD || "Admin@123456";
-    const initialAdminPhone = process.env.VELOTRACK_INITIAL_ADMIN_PHONE || "+201000000000";
-
-    await engine.ensureAdminCredentials({
-      adminEmail: initialAdminEmail,
-      adminUsername: initialAdminUsername,
-      adminPassword: initialAdminPassword,
-      adminPhone: initialAdminPhone,
-      mustChangePassword: process.env.VELOTRACK_FORCE_ADMIN_PASSWORD_CHANGE === "true"
-    });
+    const initialAdminEmail = (process.env.VELOTRACK_INITIAL_ADMIN_EMAIL ?? "").trim();
+    const initialAdminPassword = process.env.VELOTRACK_INITIAL_ADMIN_PASSWORD ?? "";
+    if (initialAdminEmail && initialAdminPassword) {
+      await engine.bootstrapInitialAdminIfNeeded({
+        adminEmail: initialAdminEmail,
+        adminUsername: process.env.VELOTRACK_INITIAL_ADMIN_USERNAME || "admin",
+        adminPassword: initialAdminPassword,
+        adminPhone: process.env.VELOTRACK_INITIAL_ADMIN_PHONE ?? ""
+      });
+    } else if (initialAdminEmail || initialAdminPassword) {
+      throw new Error("VELOTRACK_INITIAL_ADMIN_CONFIGURATION_INCOMPLETE");
+    }
 
     const requestListener = createVeloTrackRequestListener({
       engine,

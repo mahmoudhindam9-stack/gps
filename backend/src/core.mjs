@@ -416,22 +416,36 @@ export class SupabaseDatabaseAdapter {
     );
     const sqlText = fs.readFileSync(customSchemaPath ?? defaultPath, "utf8");
     await this._withSerializedClient(async (client) => {
+      // PGlite is a test-only compatibility fixture. Hosted Supabase already owns
+      // auth.users and its roles, so production SQL never alters the auth schema.
+      if (this.pglite) {
+        await client.exec(`
+          CREATE SCHEMA IF NOT EXISTS auth;
+          CREATE TABLE IF NOT EXISTS auth.users (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            email VARCHAR(255) UNIQUE,
+            phone VARCHAR(32) UNIQUE,
+            encrypted_password TEXT,
+            email_confirmed_at TIMESTAMPTZ,
+            phone_confirmed_at TIMESTAMPTZ,
+            raw_app_meta_data JSONB DEFAULT '{}'::jsonb,
+            raw_user_meta_data JSONB DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'authenticated') THEN
+              CREATE ROLE authenticated NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'service_role') THEN
+              CREATE ROLE service_role NOLOGIN BYPASSRLS;
+            END IF;
+          END
+          $$;
+        `);
+      }
       await client.exec(sqlText);
-    });
-    await this.purgeKnownDemoRecords();
-  }
-
-  async purgeKnownDemoRecords() {
-    await this.runSystemTransaction(async (tx) => {
-      await tx.query(
-        `DELETE FROM public.activation_sms_logs
-         WHERE gateway_message_id LIKE 'GSM-EG-%'`
-      );
-      await tx.query(
-        `DELETE FROM public.users_profile
-         WHERE email LIKE '%@velotrack.demo'
-            OR email IN ('admin@velotrack.eg', 'customer@velotrack.eg')`
-      );
     });
   }
 
@@ -1222,7 +1236,7 @@ export class VeloTrackEngine {
     adminEmail = process.env.VELOTRACK_INITIAL_ADMIN_EMAIL,
     adminUsername = process.env.VELOTRACK_INITIAL_ADMIN_USERNAME,
     adminPassword = process.env.VELOTRACK_INITIAL_ADMIN_PASSWORD,
-    adminPhone = process.env.VELOTRACK_INITIAL_ADMIN_PHONE ?? "+201000000000"
+    adminPhone = process.env.VELOTRACK_INITIAL_ADMIN_PHONE ?? ""
   } = {}) {
     const check = await this.db.runSystemTransaction(async (tx) => {
       const stateRes = await tx.query(
@@ -1256,8 +1270,12 @@ export class VeloTrackEngine {
     const cleanEmail = String(adminEmail ?? "").toLowerCase().trim();
     const cleanUsername = String(adminUsername ?? "").trim();
     const rawPassword = String(adminPassword ?? "");
-    const phoneNorm = normalizeEgyptianPhone(adminPhone);
-    const finalPhone = phoneNorm.isValid ? phoneNorm.e164Number : String(adminPhone ?? "+201000000000").trim();
+    const rawPhone = String(adminPhone ?? "").trim();
+    const phoneNorm = rawPhone ? normalizeEgyptianPhone(rawPhone) : null;
+    if (rawPhone && !phoneNorm?.isValid) {
+      throw new Error("BOOTSTRAP_ADMIN_PHONE_INVALID");
+    }
+    const finalPhone = phoneNorm?.isValid ? phoneNorm.e164Number : "";
 
     if (!cleanEmail || !cleanEmail.includes("@")) {
       throw new Error("BOOTSTRAP_ADMIN_EMAIL_REQUIRED");
@@ -1308,85 +1326,9 @@ export class VeloTrackEngine {
    * Ensures that the primary administrator account (`admin` / `Admin@123456` by default)
    * exists, is active, and has the expected credentials.
    */
-  async ensureAdminCredentials({
-    adminEmail = process.env.VELOTRACK_INITIAL_ADMIN_EMAIL ?? "admin@velotrack.local",
-    adminUsername = process.env.VELOTRACK_INITIAL_ADMIN_USERNAME ?? "admin",
-    adminPassword = process.env.VELOTRACK_INITIAL_ADMIN_PASSWORD ?? "Admin@123456",
-    adminPhone = process.env.VELOTRACK_INITIAL_ADMIN_PHONE ?? "+201000000000",
-    mustChangePassword = false
-  } = {}) {
-    const cleanUsername = String(adminUsername || "admin").trim();
-    const cleanEmail = String(adminEmail || "admin@velotrack.local").toLowerCase().trim();
-    const rawPassword = String(adminPassword || "Admin@123456");
-    const phoneNorm = normalizeEgyptianPhone(adminPhone);
-    const finalPhone = phoneNorm.isValid ? phoneNorm.e164Number : "+201000000000";
-
-    const existing = await this.db.runSystemTransaction(async (tx) => {
-      const res = await tx.query(
-        `SELECT id, username, email, phone
-         FROM public.users_profile
-         WHERE LOWER(username) = LOWER($1) OR role = 'ADMIN'
-         ORDER BY CASE WHEN LOWER(username) = LOWER($1) THEN 0 ELSE 1 END
-         LIMIT 1`,
-        [cleanUsername]
-      );
-      return res.rows[0] ?? null;
-    });
-
-    if (existing) {
-      await this.authService.updateAuthUserPassword({
-        userId: existing.id,
-        newPassword: rawPassword
-      });
-      await this.db.runSystemTransaction(async (tx) => {
-        await tx.query(
-          `UPDATE public.users_profile
-           SET username = $2,
-               role = 'ADMIN',
-               is_active = TRUE,
-               deleted_at = NULL,
-               must_change_password = $3,
-               updated_at = NOW()
-           WHERE id = $1`,
-          [existing.id, cleanUsername, Boolean(mustChangePassword)]
-        );
-        await tx.query(
-          `UPDATE public.bootstrap_state
-           SET admin_bootstrapped = TRUE,
-               admin_user_id = $1,
-               bootstrapped_at = COALESCE(bootstrapped_at, NOW())
-           WHERE id = 1`,
-          [existing.id]
-        );
-      });
-      return {
-        adminUserId: existing.id,
-        username: cleanUsername,
-        mustChangePassword: Boolean(mustChangePassword)
-      };
-    }
-
-    const created = await this.bootstrapInitialAdminIfNeeded({
-      adminEmail: cleanEmail,
-      adminUsername: cleanUsername,
-      adminPassword: rawPassword,
-      adminPhone: finalPhone
-    });
-    if (!mustChangePassword && created.adminUserId) {
-      await this.db.runSystemTransaction(async (tx) => {
-        await tx.query(
-          `UPDATE public.users_profile
-           SET must_change_password = FALSE
-           WHERE id = $1`,
-          [created.adminUserId]
-        );
-      });
-    }
-    return {
-      adminUserId: created.adminUserId,
-      username: cleanUsername,
-      mustChangePassword: Boolean(mustChangePassword)
-    };
+  // Backward-compatible alias. Bootstrap is one-shot and never resets an existing admin password.
+  async ensureAdminCredentials(options = {}) {
+    return this.bootstrapInitialAdminIfNeeded(options);
   }
 
   /**
