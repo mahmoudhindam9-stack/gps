@@ -72,3 +72,16 @@ Traccar lists **Concox GT06N** under protocol `gt06` on port `5023`. This confir
 - [Traccar SMS Gateway](https://github.com/traccar/traccar-sms-gateway) — outbound SMS transport only; it is not a complete two-way provisioning/audit service. Keep its GPL-3.0 licensing separate and review it before redistributing or linking code.
 
 See `docs/TRACCAR_FOUNDATION.md` and `docs/GEMINI_COMPLETION_PROMPT.md` before implementing the remaining integration.
+
+
+## Web dashboard
+
+The VeloTrack web dashboard is included in `web/` on the `feature/web-dashboard-integrated` branch.
+
+- Frontend: `web/src/`
+- Local development: `cd web && npm install && npm run dev`
+- Production build: `cd web && npm run build`
+- Static output: `web/dist/`
+- Configure `web/.env` with the public backend origin using `VITE_API_BASE_URL`.
+
+The browser talks to the VeloTrack Backend API only. Never put Supabase service-role keys, PostgreSQL credentials, JWT signing secrets, or Traccar administrator credentials in this frontend.
