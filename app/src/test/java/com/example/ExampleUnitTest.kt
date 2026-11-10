@@ -9,7 +9,10 @@ import com.example.data.model.PlanDuration
 import com.example.data.model.ReconnectPolicy
 import com.example.data.model.SimAndImeiValidator
 import com.example.data.model.SubscriptionStatus
+import com.example.data.model.TraccarCommandType
 import com.example.data.model.UserRole
+import com.example.data.model.VehicleIcon
+import com.example.data.model.VehicleType
 import com.example.data.network.TraccarDeviceDto
 import com.example.data.network.TraccarPositionDto
 import com.example.data.repository.TraccarProtocolCorrelator
@@ -39,6 +42,29 @@ class ExampleUnitTest {
         assertTrue(valid10Digit.isValid)
         assertEquals("01287654321", valid10Digit.localNumber)
         assertEquals("+201287654321", valid10Digit.e164Number)
+    }
+
+    @Test
+    fun egyptianPhoneValidator_acceptsLocalAndE164ForUserPhones() {
+        val fromLocal = SimAndImeiValidator.normalizeEgyptianPhone("01098765432")
+        assertTrue(fromLocal.isValid)
+        assertEquals("01098765432", fromLocal.localNumber)
+        assertEquals("+201098765432", fromLocal.e164Number)
+
+        val fromE164 = SimAndImeiValidator.normalizeEgyptianPhone("+201098765432")
+        assertTrue(fromE164.isValid)
+        assertEquals("01098765432", fromE164.localNumber)
+        assertEquals("+201098765432", fromE164.e164Number)
+    }
+
+    @Test
+    fun vehicleIconAndTraccarCommands_enforceSafetyFlags() {
+        assertEquals(VehicleIcon.TRUCK, VehicleIcon.fromKey("truck"))
+        assertEquals(VehicleIcon.CAR, VehicleIcon.fromKey("unknown_icon"))
+        assertEquals("Truck", VehicleType.TRUCK.shortLabel)
+        assertFalse(TraccarCommandType.POSITION_SINGLE.isSensitive)
+        assertTrue(TraccarCommandType.ENGINE_STOP.isSensitive)
+        assertTrue(TraccarCommandType.ENGINE_RESUME.isSensitive)
     }
 
     @Test
@@ -122,7 +148,7 @@ class ExampleUnitTest {
             token = "jwt.token.value",
             userId = "uuid-admin-1",
             username = "admin",
-            email = "owner@velotrack.local",
+            email = "",
             fullName = "System Administrator",
             role = UserRole.ADMIN,
             mustChangePassword = true
@@ -144,10 +170,13 @@ class ExampleUnitTest {
         val initialDevice = DeviceEntity(
             id = "dev-1",
             imei = "358739051122332",
+            serialNumber = "SN-GT06-001",
             traccarDeviceId = 77L,
             profileId = "profile-gt06n",
             currentCustomerId = "cust-1",
             vehicleName = "Fleet Truck 01",
+            vehicleType = "TRUCK",
+            vehicleIcon = "truck",
             plateNumber = "ABC-123",
             simLocalNumber = "01012345678",
             simE164Number = "+201012345678",
@@ -233,5 +262,12 @@ class ExampleUnitTest {
         assertEquals(30.0561, outdoorDevice.lastLat!!, 0.0001)
         assertEquals(31.2394, outdoorDevice.lastLng!!, 0.0001)
         assertEquals(firstConnectMillis, subsequentSub.startedAt)
+    }
+
+    @Test
+    fun githubReleaseSemverComparison_identifiesNewerReleases() {
+        assertEquals(1, SimAndImeiValidator.compareSemver("v1.2.0", "1.1.0"))
+        assertEquals(0, SimAndImeiValidator.compareSemver("v1.1.0", "1.1.0"))
+        assertEquals(-1, SimAndImeiValidator.compareSemver("1.0.9", "1.1.0"))
     }
 }

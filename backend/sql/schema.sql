@@ -1,24 +1,33 @@
 -- ============================================================================
 -- VeloTrack GPS — Supabase PostgreSQL Business Schema & RLS Policies
 -- Linked to Supabase Auth (`auth.users`) and strictly separated from Traccar (`tc_*`).
+-- Additive, forward-only migrations preserving all existing production records.
 -- ============================================================================
 
--- Built-in gen_random_uuid() is native in PostgreSQL 13+ / Supabase PostgreSQL
-
--- Ensure `auth.users` and `authenticated` role exist for standalone migration validation
--- (No-op on a live Supabase PostgreSQL instance where `auth.users` and `authenticated` exist)
+-- Ensure `auth.users` and roles exist for standalone migration validation
+-- (No-op on a live Supabase PostgreSQL instance where `auth.users` and roles exist)
 CREATE SCHEMA IF NOT EXISTS auth;
 
 CREATE TABLE IF NOT EXISTS auth.users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE,
+    phone VARCHAR(32) UNIQUE,
     encrypted_password TEXT,
     email_confirmed_at TIMESTAMPTZ,
+    phone_confirmed_at TIMESTAMPTZ,
     raw_app_meta_data JSONB DEFAULT '{}'::jsonb,
     raw_user_meta_data JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone VARCHAR(32);
+ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS phone_confirmed_at TIMESTAMPTZ;
+ALTER TABLE auth.users ALTER COLUMN email DROP NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_users_phone_unique
+    ON auth.users (phone)
+    WHERE phone IS NOT NULL;
 
 DO $$
 BEGIN
@@ -67,18 +76,28 @@ $$;
 CREATE TABLE IF NOT EXISTS public.users_profile (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     username VARCHAR(64) UNIQUE,
-    email VARCHAR(255) NOT NULL UNIQUE,
+    email VARCHAR(255) UNIQUE,
     phone VARCHAR(32) NOT NULL,
     full_name VARCHAR(255) NOT NULL,
     role VARCHAR(16) NOT NULL CHECK (role IN ('ADMIN', 'CUSTOMER')),
     must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    deleted_at TIMESTAMPTZ,
+    deleted_by UUID REFERENCES public.users_profile(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Additive migrations for existing `public.users_profile` installations
+ALTER TABLE public.users_profile ALTER COLUMN email DROP NOT NULL;
+ALTER TABLE public.users_profile ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE public.users_profile ADD COLUMN IF NOT EXISTS deleted_by UUID REFERENCES public.users_profile(id) ON DELETE SET NULL;
+
 CREATE INDEX IF NOT EXISTS idx_users_profile_username ON public.users_profile (LOWER(username));
 CREATE INDEX IF NOT EXISTS idx_users_profile_email ON public.users_profile (LOWER(email));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_profile_phone_active
+    ON public.users_profile (phone)
+    WHERE deleted_at IS NULL AND phone <> '';
 
 -- 2. One-Time Administrator Bootstrap State Lock
 CREATE TABLE IF NOT EXISTS public.bootstrap_state (
@@ -116,20 +135,29 @@ CREATE TABLE IF NOT EXISTS public.device_profiles (
     gprson_command_template TEXT,
     optional_timer_command_template TEXT,
     expected_reply_pattern TEXT,
+    supported_commands JSONB NOT NULL DEFAULT '["positionSingle","engineStop","engineResume","custom"]'::jsonb,
     is_verified BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (manufacturer, model, firmware_version)
 );
 
+ALTER TABLE public.device_profiles
+    ADD COLUMN IF NOT EXISTS supported_commands JSONB NOT NULL DEFAULT '["positionSingle","engineStop","engineResume","custom"]'::jsonb;
+
 -- 4. Devices Table (Correlated to Traccar by IMEI and traccar_device_id)
 CREATE TABLE IF NOT EXISTS public.devices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     imei VARCHAR(15) NOT NULL UNIQUE CHECK (imei ~ '^[0-9]{15}$'),
+    serial_number VARCHAR(64),
     traccar_device_id BIGINT NOT NULL UNIQUE,
     profile_id UUID NOT NULL REFERENCES public.device_profiles(id) ON DELETE RESTRICT,
     current_customer_id UUID NOT NULL REFERENCES public.users_profile(id) ON DELETE RESTRICT,
     vehicle_name VARCHAR(120) NOT NULL,
-    plate_number VARCHAR(32) NOT NULL,
+    vehicle_type VARCHAR(32) NOT NULL DEFAULT 'CAR'
+        CHECK (vehicle_type IN ('CAR', 'MOTORCYCLE', 'TRUCK', 'BUS', 'VAN', 'EQUIPMENT', 'OTHER')),
+    vehicle_icon VARCHAR(32) NOT NULL DEFAULT 'car'
+        CHECK (vehicle_icon IN ('car', 'suv', 'motorcycle', 'truck', 'bus', 'van', 'pickup', 'tractor')),
+    plate_number VARCHAR(32) NOT NULL DEFAULT '',
     sim_local_number VARCHAR(11) NOT NULL,
     sim_e164_number VARCHAR(15) NOT NULL,
     activation_status VARCHAR(24) NOT NULL DEFAULT 'PENDING'
@@ -144,11 +172,19 @@ CREATE TABLE IF NOT EXISTS public.devices (
     ignition_on BOOLEAN,
     first_connected_at TIMESTAMPTZ,
     last_seen_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Additive migrations for existing `public.devices` installations
+ALTER TABLE public.devices ADD COLUMN IF NOT EXISTS serial_number VARCHAR(64);
+ALTER TABLE public.devices ADD COLUMN IF NOT EXISTS vehicle_type VARCHAR(32) NOT NULL DEFAULT 'CAR';
+ALTER TABLE public.devices ADD COLUMN IF NOT EXISTS vehicle_icon VARCHAR(32) NOT NULL DEFAULT 'car';
+ALTER TABLE public.devices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 CREATE INDEX IF NOT EXISTS idx_devices_customer ON public.devices(current_customer_id);
 CREATE INDEX IF NOT EXISTS idx_devices_traccar_id ON public.devices(traccar_device_id);
+CREATE INDEX IF NOT EXISTS idx_devices_serial ON public.devices(serial_number) WHERE serial_number IS NOT NULL;
 
 -- 5. Activation SMS Audit Logs
 CREATE TABLE IF NOT EXISTS public.activation_sms_logs (
@@ -157,6 +193,7 @@ CREATE TABLE IF NOT EXISTS public.activation_sms_logs (
     step_order SMALLINT NOT NULL,
     command_key VARCHAR(32) NOT NULL CHECK (command_key IN ('SERVER', 'GPRSON', 'OPTIONAL_TIMER')),
     command_text TEXT NOT NULL,
+    idempotency_key VARCHAR(128) UNIQUE,
     gateway_message_id VARCHAR(128),
     status VARCHAR(24) NOT NULL
         CHECK (status IN ('QUEUED', 'ACCEPTED', 'SENT', 'DELIVERED', 'REPLIED', 'FAILED', 'TIMED_OUT')),
@@ -166,6 +203,10 @@ CREATE TABLE IF NOT EXISTS public.activation_sms_logs (
     completed_at TIMESTAMPTZ
 );
 
+ALTER TABLE public.activation_sms_logs ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_logs_idempotency
+    ON public.activation_sms_logs(idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_sms_logs_device ON public.activation_sms_logs(device_id, step_order);
 CREATE INDEX IF NOT EXISTS idx_sms_logs_gateway_msg ON public.activation_sms_logs(gateway_message_id);
 
@@ -192,12 +233,17 @@ CREATE TABLE IF NOT EXISTS public.subscription_history (
     device_id UUID NOT NULL REFERENCES public.devices(id) ON DELETE RESTRICT,
     customer_id UUID NOT NULL REFERENCES public.users_profile(id) ON DELETE RESTRICT,
     action_type VARCHAR(32) NOT NULL
-        CHECK (action_type IN ('PROVISIONED', 'STARTED_ON_1ST_CONNECTION', 'RENEWED', 'ADMIN_OVERRIDE', 'SUSPENDED', 'EXPIRED')),
+        CHECK (action_type IN ('PROVISIONED', 'STARTED_ON_1ST_CONNECTION', 'RENEWED', 'ADMIN_OVERRIDE', 'SUSPENDED', 'RESUMED', 'EXPIRED')),
     plan_duration VARCHAR(16) NOT NULL,
     actor_user_id UUID REFERENCES public.users_profile(id) ON DELETE SET NULL,
     notes TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Ensure existing constraint allows RESUMED
+ALTER TABLE public.subscription_history DROP CONSTRAINT IF EXISTS subscription_history_action_type_check;
+ALTER TABLE public.subscription_history ADD CONSTRAINT subscription_history_action_type_check
+    CHECK (action_type IN ('PROVISIONED', 'STARTED_ON_1ST_CONNECTION', 'RENEWED', 'ADMIN_OVERRIDE', 'SUSPENDED', 'RESUMED', 'EXPIRED'));
 
 CREATE INDEX IF NOT EXISTS idx_sub_history_device ON public.subscription_history(device_id, created_at DESC);
 
@@ -213,6 +259,24 @@ CREATE TABLE IF NOT EXISTS public.device_ownership_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ownership_history_device ON public.device_ownership_history(device_id, reassigned_at DESC);
+
+-- 9. Audited Device Commands Table (Real Traccar Command Execution Records)
+CREATE TABLE IF NOT EXISTS public.device_commands (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id UUID NOT NULL REFERENCES public.devices(id) ON DELETE RESTRICT,
+    traccar_device_id BIGINT NOT NULL,
+    actor_user_id UUID NOT NULL REFERENCES public.users_profile(id) ON DELETE RESTRICT,
+    actor_role VARCHAR(16) NOT NULL CHECK (actor_role IN ('ADMIN', 'CUSTOMER')),
+    command_type VARCHAR(64) NOT NULL,
+    parameters JSONB NOT NULL DEFAULT '{}'::jsonb,
+    confirmed_sensitive BOOLEAN NOT NULL DEFAULT FALSE,
+    traccar_response JSONB,
+    status VARCHAR(24) NOT NULL CHECK (status IN ('SENT', 'QUEUED', 'DELIVERED', 'FAILED')),
+    failure_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_commands_device ON public.device_commands(device_id, created_at DESC);
 
 -- Grant table permissions to `authenticated` and `service_role` (governed by RLS below)
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
@@ -244,6 +308,9 @@ ALTER TABLE public.subscription_history FORCE ROW LEVEL SECURITY;
 
 ALTER TABLE public.device_ownership_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.device_ownership_history FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE public.device_commands ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.device_commands FORCE ROW LEVEL SECURITY;
 
 -- Policies for `users_profile`
 DROP POLICY IF EXISTS rls_users_profile_select ON public.users_profile;
@@ -295,10 +362,17 @@ CREATE POLICY rls_devices_select ON public.devices
     );
 
 DROP POLICY IF EXISTS rls_devices_admin_write ON public.devices;
-CREATE POLICY rls_devices_admin_write ON public.devices
+DROP POLICY IF EXISTS rls_devices_write ON public.devices;
+CREATE POLICY rls_devices_write ON public.devices
     FOR ALL
-    USING (public.request_user_role() = 'ADMIN')
-    WITH CHECK (public.request_user_role() = 'ADMIN');
+    USING (
+        public.request_user_role() = 'ADMIN'
+        OR current_customer_id = public.request_user_id()
+    )
+    WITH CHECK (
+        public.request_user_role() = 'ADMIN'
+        OR current_customer_id = public.request_user_id()
+    );
 
 -- Policies for `activation_sms_logs`
 DROP POLICY IF EXISTS rls_sms_logs_select ON public.activation_sms_logs;
@@ -364,6 +438,34 @@ CREATE POLICY rls_ownership_history_admin_write ON public.device_ownership_histo
     FOR ALL
     USING (public.request_user_role() = 'ADMIN')
     WITH CHECK (public.request_user_role() = 'ADMIN');
+
+-- Policies for `device_commands`
+DROP POLICY IF EXISTS rls_device_commands_select ON public.device_commands;
+CREATE POLICY rls_device_commands_select ON public.device_commands
+    FOR SELECT
+    USING (
+        public.request_user_role() = 'ADMIN'
+        OR EXISTS (
+            SELECT 1 FROM public.devices d
+            WHERE d.id = device_commands.device_id
+              AND d.current_customer_id = public.request_user_id()
+        )
+    );
+
+DROP POLICY IF EXISTS rls_device_commands_insert ON public.device_commands;
+CREATE POLICY rls_device_commands_insert ON public.device_commands
+    FOR INSERT
+    WITH CHECK (
+        public.request_user_role() = 'ADMIN'
+        OR (
+            actor_user_id = public.request_user_id()
+            AND EXISTS (
+                SELECT 1 FROM public.devices d
+                WHERE d.id = device_commands.device_id
+                  AND d.current_customer_id = public.request_user_id()
+            )
+        )
+    );
 
 -- ============================================================================
 -- Surgical Data Cleanup of Known Demo / Seeded Artifacts

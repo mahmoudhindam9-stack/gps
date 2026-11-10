@@ -16,6 +16,107 @@ export const PLAN_DURATION_DAYS = {
   LIFETIME: null
 };
 
+export const VEHICLE_TYPES = [
+  "CAR",
+  "MOTORCYCLE",
+  "TRUCK",
+  "BUS",
+  "VAN",
+  "EQUIPMENT",
+  "OTHER"
+];
+
+export const VEHICLE_ICONS = [
+  "car",
+  "suv",
+  "motorcycle",
+  "truck",
+  "bus",
+  "van",
+  "pickup",
+  "tractor"
+];
+
+export const OFFICIAL_TRACCAR_COMMANDS = {
+  positionSingle: {
+    type: "positionSingle",
+    labelAr: "طلب موقع فوري",
+    labelEn: "Single Position Request",
+    isSensitive: false,
+    sensitive: false,
+    requiresConfirmation: false,
+    customerPermitted: true,
+    parameters: []
+  },
+  engineStop: {
+    type: "engineStop",
+    labelAr: "إيقاف المحرك",
+    labelEn: "Engine Stop",
+    isSensitive: true,
+    sensitive: true,
+    requiresConfirmation: true,
+    customerPermitted: true,
+    parameters: []
+  },
+  engineResume: {
+    type: "engineResume",
+    labelAr: "استئناف المحرك",
+    labelEn: "Engine Resume",
+    isSensitive: true,
+    sensitive: true,
+    requiresConfirmation: true,
+    customerPermitted: true,
+    parameters: []
+  },
+  outputControl: {
+    type: "outputControl",
+    labelAr: "التحكم في المخرجات",
+    labelEn: "Output Control",
+    isSensitive: true,
+    sensitive: true,
+    requiresConfirmation: true,
+    customerPermitted: false,
+    parameters: ["index", "data"]
+  },
+  rebootDevice: {
+    type: "rebootDevice",
+    labelAr: "إعادة تشغيل الجهاز",
+    labelEn: "Reboot Device",
+    isSensitive: true,
+    sensitive: true,
+    requiresConfirmation: true,
+    customerPermitted: false,
+    parameters: []
+  },
+  setTimezone: {
+    type: "setTimezone",
+    labelAr: "ضبط المنطقة الزمنية",
+    labelEn: "Set Timezone",
+    isSensitive: false,
+    sensitive: false,
+    requiresConfirmation: false,
+    customerPermitted: false,
+    parameters: ["timezone"]
+  },
+  custom: {
+    type: "custom",
+    labelAr: "أمر مخصص",
+    labelEn: "Custom Command",
+    isSensitive: true,
+    sensitive: true,
+    requiresConfirmation: true,
+    customerPermitted: false,
+    parameters: ["data"]
+  }
+};
+
+export const PROTOCOL_SUPPORTED_COMMANDS = {
+  gt06: ["positionSingle", "engineStop", "engineResume", "rebootDevice", "setTimezone", "custom"],
+  teltonika: ["positionSingle", "outputControl", "rebootDevice", "custom"],
+  coban: ["positionSingle", "engineStop", "engineResume", "custom"],
+  tk103: ["positionSingle", "engineStop", "engineResume", "custom"]
+};
+
 export function computeExpiryMillis(startedAtMs, planDuration) {
   if (!(planDuration in PLAN_DURATION_DAYS)) {
     throw new Error(`Unsupported planDuration: ${planDuration}`);
@@ -70,6 +171,42 @@ export function normalizeEgyptianSim(rawInput) {
   };
 }
 
+/**
+ * Normalizes Egyptian user phone numbers (accepting local `010...`, `10...`, or `+2010...`, `002010...`)
+ * into canonical E.164 format (`+2010...`).
+ */
+export function normalizeEgyptianPhone(rawInput) {
+  const cleaned = String(rawInput ?? "").trim().replace(/[\s()-]/g, "");
+  if (!cleaned) {
+    return { isValid: false, localNumber: "", e164Number: "", errorReason: "Phone required" };
+  }
+  let stripped = cleaned;
+  if (stripped.startsWith("+20")) {
+    stripped = stripped.slice(3);
+  } else if (stripped.startsWith("0020")) {
+    stripped = stripped.slice(4);
+  } else if (stripped.startsWith("20") && stripped.length === 12) {
+    stripped = stripped.slice(2);
+  }
+  if (stripped.length === 11 && stripped.startsWith("0")) {
+    stripped = stripped.slice(1);
+  }
+  if (!/^(10|11|12|15)\d{8}$/.test(stripped)) {
+    return {
+      isValid: false,
+      localNumber: cleaned,
+      e164Number: "",
+      errorReason: "Invalid Egyptian phone number"
+    };
+  }
+  return {
+    isValid: true,
+    localNumber: `0${stripped}`,
+    e164Number: `+20${stripped}`,
+    errorReason: null
+  };
+}
+
 export function isValidImei(imei) {
   const clean = String(imei ?? "").trim();
   if (!/^\d{15}$/.test(clean)) return false;
@@ -100,10 +237,130 @@ export function verifyPassword(password, storedHash) {
   return crypto.timingSafeEqual(derived, keyBuf);
 }
 
+export const VELOTRACK_APP_VERSION = "1.1.0";
+export const DEFAULT_GITHUB_REPO = "mahmoudhindam9-stack/gps";
+
+export function normalizeSemver(versionStr) {
+  const clean = String(versionStr ?? "")
+    .trim()
+    .replace(/^v/i, "")
+    .split("-")[0];
+  const parts = clean.split(".").map((n) => Number.parseInt(n, 10));
+  if (parts.length === 0 || parts.some((n) => Number.isNaN(n) || n < 0)) {
+    return [0, 0, 0];
+  }
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+}
+
+export function compareSemver(versionA, versionB) {
+  const a = normalizeSemver(versionA);
+  const b = normalizeSemver(versionB);
+  for (let i = 0; i < 3; i++) {
+    if (a[i] > b[i]) return 1;
+    if (a[i] < b[i]) return -1;
+  }
+  return 0;
+}
+
+export async function checkGitHubReleaseStatus({
+  repo = process.env.VELOTRACK_GITHUB_REPO ?? DEFAULT_GITHUB_REPO,
+  currentVersion = process.env.VELOTRACK_APP_VERSION ?? VELOTRACK_APP_VERSION,
+  autoUpdateEnabled = process.env.VELOTRACK_AUTO_UPDATE_ENABLED !== "false",
+  fetchImpl = globalThis.fetch
+} = {}) {
+  const cleanRepo = String(repo || DEFAULT_GITHUB_REPO).trim();
+  const checkedAtMs = Date.now();
+  const headers = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": `VeloTrack-GPS/${currentVersion}`
+  };
+
+  try {
+    let releaseObj = null;
+    const latestRes = await fetchImpl(`https://api.github.com/repos/${cleanRepo}/releases/latest`, {
+      headers
+    });
+    if (latestRes.ok) {
+      releaseObj = await latestRes.json();
+    } else if (latestRes.status === 404) {
+      const listRes = await fetchImpl(`https://api.github.com/repos/${cleanRepo}/releases?per_page=1`, {
+        headers
+      });
+      if (listRes.ok) {
+        const list = await listRes.json();
+        if (Array.isArray(list) && list.length > 0) {
+          releaseObj = list[0];
+        }
+      }
+    }
+
+    if (!releaseObj || !releaseObj.tag_name) {
+      return {
+        currentVersion,
+        repository: cleanRepo,
+        latestVersion: currentVersion,
+        tagName: `v${currentVersion}`,
+        releaseName: `VeloTrack GPS v${currentVersion}`,
+        publishedAt: null,
+        htmlUrl: `https://github.com/${cleanRepo}/releases`,
+        apkDownloadUrl: null,
+        webBundleDownloadUrl: null,
+        releaseNotes: "",
+        updateAvailable: false,
+        autoUpdateEnabled: Boolean(autoUpdateEnabled),
+        checkedAtMs,
+        status: "UP_TO_DATE"
+      };
+    }
+
+    const tagName = String(releaseObj.tag_name);
+    const latestVersion = tagName.replace(/^v/i, "");
+    const assets = Array.isArray(releaseObj.assets) ? releaseObj.assets : [];
+    const apkAsset = assets.find((a) => String(a?.name ?? "").toLowerCase().endsWith(".apk"));
+    const webAsset = assets.find((a) => String(a?.name ?? "").toLowerCase().endsWith(".tar.gz"));
+    const updateAvailable = compareSemver(latestVersion, currentVersion) > 0;
+
+    return {
+      currentVersion,
+      repository: cleanRepo,
+      latestVersion,
+      tagName,
+      releaseName: String(releaseObj.name || tagName),
+      publishedAt: releaseObj.published_at ?? null,
+      htmlUrl: String(releaseObj.html_url || `https://github.com/${cleanRepo}/releases`),
+      apkDownloadUrl: apkAsset?.browser_download_url ?? null,
+      webBundleDownloadUrl: webAsset?.browser_download_url ?? null,
+      releaseNotes: String(releaseObj.body ?? ""),
+      updateAvailable,
+      autoUpdateEnabled: Boolean(autoUpdateEnabled),
+      checkedAtMs,
+      status: updateAvailable ? "UPDATE_AVAILABLE" : "UP_TO_DATE"
+    };
+  } catch (err) {
+    return {
+      currentVersion,
+      repository: cleanRepo,
+      latestVersion: currentVersion,
+      tagName: `v${currentVersion}`,
+      releaseName: `VeloTrack GPS v${currentVersion}`,
+      publishedAt: null,
+      htmlUrl: `https://github.com/${cleanRepo}/releases`,
+      apkDownloadUrl: null,
+      webBundleDownloadUrl: null,
+      releaseNotes: "",
+      updateAvailable: false,
+      autoUpdateEnabled: Boolean(autoUpdateEnabled),
+      checkedAtMs,
+      status: "OFFLINE",
+      error: err.message ?? "GITHUB_UNREACHABLE"
+    };
+  }
+}
+
+
 /**
  * Supabase PostgreSQL Database Adapter
  * Enforces per-transaction Row-Level Security (RLS) context for all authenticated requests.
- * Supports both `pg.Pool` (production Supabase PostgreSQL) and `PGlite` (embedded PostgreSQL for tests).
  */
 export class SupabaseDatabaseAdapter {
   constructor({ connectionString, pool = null, pglite = null, ssl = false }) {
@@ -164,10 +421,6 @@ export class SupabaseDatabaseAdapter {
     await this.purgeKnownDemoRecords();
   }
 
-  /**
-   * Removes only known fake/demo/seeded artifacts from earlier prototypes
-   * without touching legitimate user-created production records.
-   */
   async purgeKnownDemoRecords() {
     await this.runSystemTransaction(async (tx) => {
       await tx.query(
@@ -182,10 +435,6 @@ export class SupabaseDatabaseAdapter {
     });
   }
 
-  /**
-   * Executes a privileged system transaction (used ONLY for one-time admin bootstrap,
-   * incoming Traccar telemetry ingestion, and verified SMS webhooks).
-   */
   async runSystemTransaction(callback) {
     return this._withSerializedClient(async (client) => {
       await client.query("BEGIN");
@@ -201,10 +450,6 @@ export class SupabaseDatabaseAdapter {
     });
   }
 
-  /**
-   * Executes a tenant-isolated transaction that switches the PostgreSQL role to `authenticated`
-   * and binds the caller's verified Supabase JWT claims so PostgreSQL RLS policies are enforced.
-   */
   async runTenantTransaction(actorClaims, callback) {
     if (!actorClaims || !actorClaims.userId || !actorClaims.role) {
       throw new Error("AUTH_CLAIMS_INVALID");
@@ -213,7 +458,8 @@ export class SupabaseDatabaseAdapter {
       sub: actorClaims.userId,
       role: "authenticated",
       user_role: actorClaims.role,
-      email: actorClaims.email ?? ""
+      email: actorClaims.email ?? "",
+      phone: actorClaims.phone ?? ""
     });
     return this._withSerializedClient(async (client) => {
       await client.query("BEGIN");
@@ -248,8 +494,8 @@ export class SupabaseDatabaseAdapter {
 
 /**
  * Supabase Authentication & JWT Service
- * Connects to Supabase Auth (`@supabase/supabase-js`) and `auth.users`,
- * and verifies HS256 Supabase JWTs using `SUPABASE_JWT_SECRET`.
+ * Supports phone-and-password and email-and-password authentication without fabricating emails,
+ * plus single-use short-lived WebSocket tickets.
  */
 export class SupabaseAuthService {
   constructor({
@@ -265,6 +511,7 @@ export class SupabaseAuthService {
     this.jwtSecret = supabaseJwtSecret;
     this.dbAdapter = dbAdapter;
     this.supabaseUrl = supabaseUrl;
+    this._wsTickets = new Map();
 
     const hasRemoteSupabase =
       Boolean(supabaseUrl && supabaseAnonKey && supabaseServiceRoleKey) &&
@@ -283,16 +530,17 @@ export class SupabaseAuthService {
     }
   }
 
-  signSupabaseJwt({ userId, email, role, username }, expiresInSeconds = 3600 * 12) {
+  signSupabaseJwt({ userId, email = null, phone = null, role, username }, expiresInSeconds = 3600 * 12) {
     const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
     const nowSec = Math.floor(Date.now() / 1000);
     const bodyObj = {
       aud: "authenticated",
       role: "authenticated",
       sub: userId,
-      email,
+      email: email ?? undefined,
+      phone: phone ?? undefined,
       user_role: role,
-      app_metadata: { provider: "email", role, username },
+      app_metadata: { provider: email ? "email" : "phone", role, username },
       user_metadata: { username },
       iat: nowSec,
       exp: nowSec + expiresInSeconds
@@ -335,54 +583,119 @@ export class SupabaseAuthService {
     return {
       userId: claims.sub,
       role: appRole,
-      email: claims.email,
+      email: claims.email ?? null,
+      phone: claims.phone ?? null,
       username: claims.app_metadata?.username ?? claims.user_metadata?.username ?? null
     };
   }
 
-  async createAuthUser({ email, password, role, username }) {
-    const cleanEmail = String(email ?? "").toLowerCase().trim();
+  /**
+   * Issues a short-lived (45s), single-use WebSocket ticket so browser clients
+   * do not need to pass long-lived JWTs in URL query strings.
+   */
+  issueWebSocketTicket(claims, ttlMs = 45000) {
+    const now = Date.now();
+    for (const [k, v] of this._wsTickets.entries()) {
+      if (v.expiresAtMs <= now) this._wsTickets.delete(k);
+    }
+    const ticket = crypto.randomBytes(24).toString("hex");
+    this._wsTickets.set(ticket, {
+      claims,
+      expiresAtMs: now + ttlMs
+    });
+    return { ticket, expiresAtMs: now + ttlMs };
+  }
+
+  consumeWebSocketTicket(ticketOrObj) {
+    const ticket =
+      ticketOrObj && typeof ticketOrObj === "object" ? ticketOrObj.ticket : ticketOrObj;
+    if (!ticket || typeof ticket !== "string") {
+      throw new Error("AUTH_WS_TICKET_INVALID");
+    }
+    const entry = this._wsTickets.get(ticket);
+    this._wsTickets.delete(ticket);
+    if (!entry || entry.expiresAtMs <= Date.now()) {
+      throw new Error("AUTH_WS_TICKET_EXPIRED");
+    }
+    return entry.claims;
+  }
+
+  async createAuthUser({ email = null, phone = null, password, role, username }) {
+    const cleanEmail = email ? String(email).toLowerCase().trim() : null;
+    const cleanPhone = phone ? String(phone).trim() : null;
+
+    if (!cleanEmail && !cleanPhone) {
+      throw new Error("AUTH_IDENTIFIER_REQUIRED");
+    }
+
     if (this.adminClient) {
-      const { data, error } = await this.adminClient.auth.admin.createUser({
-        email: cleanEmail,
+      const createPayload = {
         password,
-        email_confirm: true,
         app_metadata: { role, username },
         user_metadata: { username }
-      });
-      if (error || !data?.user?.id) {
-        throw new Error(`SUPABASE_AUTH_CREATE_FAILED:${error?.message ?? "unknown"}`);
+      };
+      if (cleanPhone) {
+        createPayload.phone = cleanPhone;
+        createPayload.phone_confirm = true;
       }
-      // Supabase Auth owns auth.users and password hashing. Never write encrypted_password
-      // directly: doing so would overwrite Supabase's bcrypt hash with an incompatible hash.
-      return { id: data.user.id, email: cleanEmail };
+      if (cleanEmail) {
+        createPayload.email = cleanEmail;
+        createPayload.email_confirm = true;
+      }
+      const { data, error } = await this.adminClient.auth.admin.createUser(createPayload);
+      if (error || !data?.user?.id) {
+        const errMsg = error?.message ?? "unknown";
+        if (/phone.*disable/i.test(errMsg)) {
+          throw new Error(
+            "SUPABASE_PHONE_AUTH_NOT_ENABLED: Enable GOTRUE_EXTERNAL_PHONE_ENABLED=true and GOTRUE_SMS_AUTOCONFIRM=true in self-hosted Supabase GoTrue"
+          );
+        }
+        throw new Error(`SUPABASE_AUTH_CREATE_FAILED:${errMsg}`);
+      }
+      // Supabase Auth owns auth.users and password hashing. Never write encrypted_password directly.
+      return { id: data.user.id, email: cleanEmail, phone: cleanPhone };
     }
 
     // Direct Supabase PostgreSQL `auth.users` persistence (self-hosted DB / test environment)
     return this.dbAdapter.runSystemTransaction(async (tx) => {
       const id = crypto.randomUUID();
       await tx.query(
-        `INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data)
-         VALUES ($1, $2, $3, NOW(), $4::jsonb, $5::jsonb)`,
+        `INSERT INTO auth.users (
+           id, email, phone, encrypted_password,
+           email_confirmed_at, phone_confirmed_at,
+           raw_app_meta_data, raw_user_meta_data
+         )
+         VALUES ($1, $2::text, $3::text, $4, CASE WHEN $2::text IS NOT NULL THEN NOW() ELSE NULL END, CASE WHEN $3::text IS NOT NULL THEN NOW() ELSE NULL END, $5::jsonb, $6::jsonb)`,
         [
           id,
           cleanEmail,
+          cleanPhone,
           hashPassword(password),
           JSON.stringify({ role, username }),
           JSON.stringify({ username })
         ]
       );
-      return { id, email: cleanEmail };
+      return { id, email: cleanEmail, phone: cleanPhone };
     });
   }
 
-  async verifyUserPassword({ userId, email, password }) {
+  async verifyUserPassword({ userId, email = null, phone = null, password }) {
     if (this.anonClient) {
-      const { data, error } = await this.anonClient.auth.signInWithPassword({
-        email,
-        password
-      });
+      const credentials = email
+        ? { email, password }
+        : phone
+        ? { phone, password }
+        : null;
+      if (!credentials) {
+        return { valid: false, accessToken: null };
+      }
+      const { data, error } = await this.anonClient.auth.signInWithPassword(credentials);
       if (error || !data?.user) {
+        if (error?.message && /phone.*disable/i.test(error.message)) {
+          throw new Error(
+            "SUPABASE_PHONE_AUTH_NOT_ENABLED: Enable GOTRUE_EXTERNAL_PHONE_ENABLED=true and GOTRUE_SMS_AUTOCONFIRM=true in self-hosted Supabase GoTrue"
+          );
+        }
         return { valid: false, accessToken: null };
       }
       return { valid: true, accessToken: data.session?.access_token ?? null };
@@ -413,6 +726,46 @@ export class SupabaseAuthService {
       await tx.query(
         `UPDATE auth.users SET encrypted_password = $2, updated_at = NOW() WHERE id = $1`,
         [userId, hashPassword(newPassword)]
+      );
+    });
+  }
+
+  async updateAuthUserMetadata({ userId, email = undefined, phone = undefined, role, username }) {
+    if (this.adminClient) {
+      const payload = {
+        app_metadata: { role, username },
+        user_metadata: { username }
+      };
+      if (email !== undefined) {
+        payload.email = email;
+        if (email) payload.email_confirm = true;
+      }
+      if (phone !== undefined) {
+        payload.phone = phone;
+        if (phone) payload.phone_confirm = true;
+      }
+      const { error } = await this.adminClient.auth.admin.updateUserById(userId, payload);
+      if (error) {
+        throw new Error(`SUPABASE_AUTH_UPDATE_FAILED:${error.message}`);
+      }
+      return;
+    }
+    await this.dbAdapter.runSystemTransaction(async (tx) => {
+      await tx.query(
+        `UPDATE auth.users
+         SET email = COALESCE($2, email),
+             phone = COALESCE($3, phone),
+             raw_app_meta_data = $4::jsonb,
+             raw_user_meta_data = $5::jsonb,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [
+          userId,
+          email !== undefined ? email : null,
+          phone !== undefined ? phone : null,
+          JSON.stringify({ role, username }),
+          JSON.stringify({ username })
+        ]
       );
     });
   }
@@ -528,10 +881,12 @@ export class TraccarBridgeClient {
     return cookie;
   }
 
-  async registerDeviceInTraccar({ name, imei }) {
+  async registerDeviceInTraccar({ name, imei, category = null }) {
     if (!this.sessionCookie) {
       await this.authenticateSession();
     }
+    const payloadBody = { name, uniqueId: imei };
+    if (category) payloadBody.category = String(category).toLowerCase();
     const res = await this.fetchImpl(`${this.baseUrl}/api/devices`, {
       method: "POST",
       headers: {
@@ -539,7 +894,7 @@ export class TraccarBridgeClient {
         Accept: "application/json",
         Cookie: this.sessionCookie
       },
-      body: JSON.stringify({ name, uniqueId: imei })
+      body: JSON.stringify(payloadBody)
     });
     if (res.status === 401) {
       this.sessionCookie = null;
@@ -553,6 +908,102 @@ export class TraccarBridgeClient {
       throw new Error("TRACCAR_INVALID_DEVICE_ID");
     }
     return payload;
+  }
+
+  async updateDeviceInTraccar({ traccarDeviceId, name, imei, category = null }) {
+    if (!this.sessionCookie) {
+      await this.authenticateSession();
+    }
+    const payloadBody = { id: Number(traccarDeviceId), name, uniqueId: imei };
+    if (category) payloadBody.category = String(category).toLowerCase();
+    const res = await this.fetchImpl(`${this.baseUrl}/api/devices/${traccarDeviceId}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Cookie: this.sessionCookie
+      },
+      body: JSON.stringify(payloadBody)
+    });
+    if (res.status === 401) {
+      this.sessionCookie = null;
+      throw new Error("TRACCAR_UNAUTHORIZED");
+    }
+    if (!res.ok) {
+      throw new Error(`TRACCAR_DEVICE_UPDATE_FAILED_${res.status}`);
+    }
+    return res.json();
+  }
+
+  async deleteDeviceInTraccar(traccarDeviceId) {
+    if (!this.sessionCookie) {
+      await this.authenticateSession();
+    }
+    const res = await this.fetchImpl(`${this.baseUrl}/api/devices/${traccarDeviceId}`, {
+      method: "DELETE",
+      headers: { Cookie: this.sessionCookie }
+    });
+    if (res.status === 401) {
+      this.sessionCookie = null;
+    }
+    return res.ok;
+  }
+
+  async fetchSupportedCommandTypes(traccarDeviceId) {
+    if (!this.sessionCookie) {
+      await this.authenticateSession();
+    }
+    const params = new URLSearchParams({ deviceId: String(traccarDeviceId) });
+    const res = await this.fetchImpl(`${this.baseUrl}/api/commands/types?${params.toString()}`, {
+      headers: { Accept: "application/json", Cookie: this.sessionCookie }
+    });
+    if (res.status === 401) {
+      this.sessionCookie = null;
+      throw new Error("TRACCAR_SESSION_EXPIRED");
+    }
+    if (!res.ok) {
+      return null;
+    }
+    const rows = await res.json();
+    if (!Array.isArray(rows)) return null;
+    return rows.map((r) => (typeof r === "string" ? r : r.type)).filter(Boolean);
+  }
+
+  async sendDeviceCommand({ traccarDeviceId, type, attributes = {}, description = "" }) {
+    if (!this.sessionCookie) {
+      await this.authenticateSession();
+    }
+    const res = await this.fetchImpl(`${this.baseUrl}/api/commands/send`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Cookie: this.sessionCookie
+      },
+      body: JSON.stringify({
+        deviceId: Number(traccarDeviceId),
+        type,
+        attributes,
+        description
+      })
+    });
+    if (res.status === 401) {
+      this.sessionCookie = null;
+      throw new Error("TRACCAR_SESSION_EXPIRED");
+    }
+    if (!res.ok && res.status !== 202) {
+      throw new Error(`TRACCAR_COMMAND_SEND_FAILED_${res.status}`);
+    }
+    let body = {};
+    try {
+      body = await res.json();
+    } catch {
+      body = { status: res.status };
+    }
+    return {
+      queued: res.status === 202,
+      response: body
+    };
   }
 
   async fetchDevicesAndPositions() {
@@ -611,10 +1062,6 @@ export class TraccarBridgeClient {
     }));
   }
 
-  /**
-   * Opens and maintains an authenticated WebSocket connection to Traccar `/api/socket`
-   * using the real `JSESSIONID` cookie, performing full state reconciliation on connect/reconnect.
-   */
   async connectLiveSocket({ onUpdate, onError = () => {} }) {
     this._stopped = false;
     const connectOnce = async () => {
@@ -689,6 +1136,9 @@ export class TraccarBridgeClient {
     this._reconnectTimer = setTimeout(() => {
       connectFn();
     }, delayMs);
+    if (typeof this._reconnectTimer.unref === "function") {
+      this._reconnectTimer.unref();
+    }
   }
 
   disconnectLiveSocket() {
@@ -712,7 +1162,6 @@ export class TraccarBridgeClient {
 /**
  * Authoritative VeloTrack Business Engine
  * 100% persisted in Supabase PostgreSQL (`public.*` tables linked to `auth.users`).
- * Zero JavaScript Map business stores.
  */
 export class VeloTrackEngine {
   constructor({ dbAdapter, authService, traccarClient, smsGateway }) {
@@ -769,12 +1218,6 @@ export class VeloTrackEngine {
     this._expiryTimers.clear();
   }
 
-  /**
-   * One-Time Initial Administrator Bootstrap
-   * - Uses environment secrets (`VELOTRACK_INITIAL_ADMIN_EMAIL`, `VELOTRACK_INITIAL_ADMIN_USERNAME`, `VELOTRACK_INITIAL_ADMIN_PASSWORD`).
-   * - Creates the administrator in Supabase Auth (`auth.users`) and `public.users_profile` with `role = 'ADMIN'` and `must_change_password = TRUE`.
-   * - Locks `public.bootstrap_state.admin_bootstrapped = TRUE` so it never runs again or resets the admin on restart.
-   */
   async bootstrapInitialAdminIfNeeded({
     adminEmail = process.env.VELOTRACK_INITIAL_ADMIN_EMAIL,
     adminUsername = process.env.VELOTRACK_INITIAL_ADMIN_USERNAME,
@@ -786,7 +1229,7 @@ export class VeloTrackEngine {
         `SELECT admin_bootstrapped, admin_user_id FROM public.bootstrap_state WHERE id = 1 FOR UPDATE`
       );
       const adminCountRes = await tx.query(
-        `SELECT id, username, email FROM public.users_profile WHERE role = 'ADMIN' LIMIT 1`
+        `SELECT id, username, email FROM public.users_profile WHERE role = 'ADMIN' AND deleted_at IS NULL LIMIT 1`
       );
       if (stateRes.rows[0]?.admin_bootstrapped || adminCountRes.rows.length > 0) {
         if (!stateRes.rows[0]?.admin_bootstrapped && adminCountRes.rows[0]?.id) {
@@ -813,6 +1256,8 @@ export class VeloTrackEngine {
     const cleanEmail = String(adminEmail ?? "").toLowerCase().trim();
     const cleanUsername = String(adminUsername ?? "").trim();
     const rawPassword = String(adminPassword ?? "");
+    const phoneNorm = normalizeEgyptianPhone(adminPhone);
+    const finalPhone = phoneNorm.isValid ? phoneNorm.e164Number : String(adminPhone ?? "+201000000000").trim();
 
     if (!cleanEmail || !cleanEmail.includes("@")) {
       throw new Error("BOOTSTRAP_ADMIN_EMAIL_REQUIRED");
@@ -826,6 +1271,7 @@ export class VeloTrackEngine {
 
     const authUser = await this.authService.createAuthUser({
       email: cleanEmail,
+      phone: finalPhone,
       password: rawPassword,
       role: "ADMIN",
       username: cleanUsername
@@ -836,7 +1282,7 @@ export class VeloTrackEngine {
         `INSERT INTO public.users_profile (
            id, username, email, phone, full_name, role, must_change_password, is_active
          ) VALUES ($1, $2, $3, $4, $5, 'ADMIN', TRUE, TRUE)`,
-        [authUser.id, cleanUsername, cleanEmail, adminPhone, "System Administrator"]
+        [authUser.id, cleanUsername, cleanEmail, finalPhone, "System Administrator"]
       );
       await tx.query(
         `UPDATE public.bootstrap_state
@@ -853,12 +1299,98 @@ export class VeloTrackEngine {
       adminUserId: authUser.id,
       username: cleanUsername,
       email: cleanEmail,
+      phone: finalPhone,
       mustChangePassword: true
     };
   }
 
   /**
-   * Authenticates by username (e.g. `admin`) or email via Supabase Auth.
+   * Ensures that the primary administrator account (`admin` / `Admin@123456` by default)
+   * exists, is active, and has the expected credentials.
+   */
+  async ensureAdminCredentials({
+    adminEmail = process.env.VELOTRACK_INITIAL_ADMIN_EMAIL ?? "admin@velotrack.local",
+    adminUsername = process.env.VELOTRACK_INITIAL_ADMIN_USERNAME ?? "admin",
+    adminPassword = process.env.VELOTRACK_INITIAL_ADMIN_PASSWORD ?? "Admin@123456",
+    adminPhone = process.env.VELOTRACK_INITIAL_ADMIN_PHONE ?? "+201000000000",
+    mustChangePassword = false
+  } = {}) {
+    const cleanUsername = String(adminUsername || "admin").trim();
+    const cleanEmail = String(adminEmail || "admin@velotrack.local").toLowerCase().trim();
+    const rawPassword = String(adminPassword || "Admin@123456");
+    const phoneNorm = normalizeEgyptianPhone(adminPhone);
+    const finalPhone = phoneNorm.isValid ? phoneNorm.e164Number : "+201000000000";
+
+    const existing = await this.db.runSystemTransaction(async (tx) => {
+      const res = await tx.query(
+        `SELECT id, username, email, phone
+         FROM public.users_profile
+         WHERE LOWER(username) = LOWER($1) OR role = 'ADMIN'
+         ORDER BY CASE WHEN LOWER(username) = LOWER($1) THEN 0 ELSE 1 END
+         LIMIT 1`,
+        [cleanUsername]
+      );
+      return res.rows[0] ?? null;
+    });
+
+    if (existing) {
+      await this.authService.updateAuthUserPassword({
+        userId: existing.id,
+        newPassword: rawPassword
+      });
+      await this.db.runSystemTransaction(async (tx) => {
+        await tx.query(
+          `UPDATE public.users_profile
+           SET username = $2,
+               role = 'ADMIN',
+               is_active = TRUE,
+               deleted_at = NULL,
+               must_change_password = $3,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [existing.id, cleanUsername, Boolean(mustChangePassword)]
+        );
+        await tx.query(
+          `UPDATE public.bootstrap_state
+           SET admin_bootstrapped = TRUE,
+               admin_user_id = $1,
+               bootstrapped_at = COALESCE(bootstrapped_at, NOW())
+           WHERE id = 1`,
+          [existing.id]
+        );
+      });
+      return {
+        adminUserId: existing.id,
+        username: cleanUsername,
+        mustChangePassword: Boolean(mustChangePassword)
+      };
+    }
+
+    const created = await this.bootstrapInitialAdminIfNeeded({
+      adminEmail: cleanEmail,
+      adminUsername: cleanUsername,
+      adminPassword: rawPassword,
+      adminPhone: finalPhone
+    });
+    if (!mustChangePassword && created.adminUserId) {
+      await this.db.runSystemTransaction(async (tx) => {
+        await tx.query(
+          `UPDATE public.users_profile
+           SET must_change_password = FALSE
+           WHERE id = $1`,
+          [created.adminUserId]
+        );
+      });
+    }
+    return {
+      adminUserId: created.adminUserId,
+      username: cleanUsername,
+      mustChangePassword: Boolean(mustChangePassword)
+    };
+  }
+
+  /**
+   * Authenticates by username, phone number (local `010...` or E.164 `+2010...`), or email.
    */
   async login(identifier, password) {
     const cleanId = String(identifier ?? "").trim();
@@ -866,14 +1398,24 @@ export class VeloTrackEngine {
       throw new Error("INVALID_CREDENTIALS");
     }
 
+    const phoneCandidate = normalizeEgyptianPhone(cleanId);
+    const e164Candidate = phoneCandidate.isValid ? phoneCandidate.e164Number : cleanId;
+    const localCandidate = phoneCandidate.isValid ? phoneCandidate.localNumber : cleanId;
+
     const profileRow = await this.db.runSystemTransaction(async (tx) => {
       const res = await tx.query(
-        `SELECT id, username, email, phone, full_name, role, must_change_password, is_active
+        `SELECT id, username, email, phone, full_name, role, must_change_password, is_active, deleted_at, created_at
          FROM public.users_profile
-         WHERE (LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1))
-           AND is_active = TRUE
+         WHERE deleted_at IS NULL
+           AND (
+             LOWER(username) = LOWER($1)
+             OR LOWER(COALESCE(email, '')) = LOWER($1)
+             OR phone = $1
+             OR phone = $2
+             OR phone = $3
+           )
          LIMIT 1`,
-        [cleanId]
+        [cleanId, e164Candidate, localCandidate]
       );
       return res.rows[0] ?? null;
     });
@@ -885,6 +1427,7 @@ export class VeloTrackEngine {
     const authCheck = await this.authService.verifyUserPassword({
       userId: profileRow.id,
       email: profileRow.email,
+      phone: profileRow.phone,
       password
     });
 
@@ -892,9 +1435,14 @@ export class VeloTrackEngine {
       throw new Error("INVALID_CREDENTIALS");
     }
 
+    if (!profileRow.is_active) {
+      throw new Error("ACCOUNT_DISABLED");
+    }
+
     const token = this.authService.signSupabaseJwt({
       userId: profileRow.id,
       email: profileRow.email,
+      phone: profileRow.phone,
       role: profileRow.role,
       username: profileRow.username
     });
@@ -906,9 +1454,6 @@ export class VeloTrackEngine {
     };
   }
 
-  /**
-   * Completes the mandatory password change after first login (or voluntary password change).
-   */
   async changePassword(actorClaims, { currentPassword, newPassword }) {
     if (!currentPassword || !newPassword || String(newPassword).length < 8) {
       throw new Error("WEAK_NEW_PASSWORD");
@@ -921,19 +1466,20 @@ export class VeloTrackEngine {
       const res = await tx.query(
         `SELECT id, username, email, phone, full_name, role, must_change_password, is_active
          FROM public.users_profile
-         WHERE id = $1`,
+         WHERE id = $1 AND deleted_at IS NULL`,
         [actorClaims.userId]
       );
       return res.rows[0] ?? null;
     });
 
-    if (!profileRow) {
+    if (!profileRow || !profileRow.is_active) {
       throw new Error("AUTH_USER_NOT_FOUND");
     }
 
     const authCheck = await this.authService.verifyUserPassword({
       userId: profileRow.id,
       email: profileRow.email,
+      phone: profileRow.phone,
       password: currentPassword
     });
     if (!authCheck.valid) {
@@ -960,6 +1506,7 @@ export class VeloTrackEngine {
     const freshToken = this.authService.signSupabaseJwt({
       userId: updatedRow.id,
       email: updatedRow.email,
+      phone: updatedRow.phone,
       role: updatedRow.role,
       username: updatedRow.username
     });
@@ -976,10 +1523,10 @@ export class VeloTrackEngine {
       const res = await tx.query(
         `SELECT id, username, email, phone, full_name, role, must_change_password, is_active, created_at
          FROM public.users_profile
-         WHERE id = $1`,
+         WHERE id = $1 AND deleted_at IS NULL`,
         [actorClaims.userId]
       );
-      if (res.rows.length === 0) {
+      if (res.rows.length === 0 || !res.rows[0].is_active) {
         throw new Error("AUTH_USER_NOT_FOUND");
       }
       return this._mapUserRow(res.rows[0]);
@@ -988,13 +1535,13 @@ export class VeloTrackEngine {
 
   async _assertActiveAndPasswordUpdated(tx, actorClaims) {
     const res = await tx.query(
-      `SELECT id, role, must_change_password, is_active
+      `SELECT id, role, must_change_password, is_active, deleted_at
        FROM public.users_profile
        WHERE id = $1`,
       [actorClaims.userId]
     );
     const user = res.rows[0];
-    if (!user || !user.is_active) {
+    if (!user || !user.is_active || user.deleted_at) {
       throw new Error("AUTH_USER_NOT_FOUND");
     }
     if (user.must_change_password) {
@@ -1004,9 +1551,22 @@ export class VeloTrackEngine {
   }
 
   /**
-   * Admin-only customer account creation (Public registration is prohibited).
+   * Creates a user account (ADMIN or CUSTOMER) with:
+   * - Full name, Phone number (normalized E.164), Username, Password, Role (ADMIN or CUSTOMER).
+   * - Email is optional and never fabricated.
    */
-  async createCustomerAccount(actorClaims, { username = null, email, phone, fullName, password }) {
+  async createUserAccount(
+    actorClaims,
+    {
+      username,
+      phone,
+      fullName,
+      password,
+      role = "CUSTOMER",
+      email = null,
+      mustChangePassword = false
+    }
+  ) {
     if (actorClaims.role !== "ADMIN") {
       throw new Error("FORBIDDEN_ADMIN_ONLY");
     }
@@ -1014,16 +1574,55 @@ export class VeloTrackEngine {
       await this._assertActiveAndPasswordUpdated(tx, actorClaims);
     });
 
-    const cleanEmail = String(email ?? "").toLowerCase().trim();
-    const cleanUsername = username ? String(username).trim() : null;
-    if (!cleanEmail.includes("@") || !fullName || !password || String(password).length < 8) {
+    const cleanFullName = String(fullName ?? "").trim();
+    const cleanUsername = String(username ?? "").trim();
+    const cleanRole = String(role ?? "CUSTOMER").toUpperCase().trim();
+    const cleanEmail = email && String(email).trim() ? String(email).toLowerCase().trim() : null;
+    const phoneNorm = normalizeEgyptianPhone(phone);
+
+    if (
+      !cleanFullName ||
+      !cleanUsername ||
+      !phoneNorm.isValid ||
+      !password ||
+      String(password).length < 8 ||
+      !["ADMIN", "CUSTOMER"].includes(cleanRole) ||
+      (cleanEmail !== null && !cleanEmail.includes("@"))
+    ) {
       throw new Error("INVALID_CUSTOMER_INPUT");
     }
 
+    await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      const dupUsername = await tx.query(
+        `SELECT id FROM public.users_profile WHERE LOWER(username) = LOWER($1) AND deleted_at IS NULL LIMIT 1`,
+        [cleanUsername]
+      );
+      if (dupUsername.rows.length > 0) {
+        throw new Error("DUPLICATE_USERNAME");
+      }
+      const dupPhone = await tx.query(
+        `SELECT id FROM public.users_profile WHERE phone = $1 AND deleted_at IS NULL LIMIT 1`,
+        [phoneNorm.e164Number]
+      );
+      if (dupPhone.rows.length > 0) {
+        throw new Error("DUPLICATE_PHONE");
+      }
+      if (cleanEmail) {
+        const dupEmail = await tx.query(
+          `SELECT id FROM public.users_profile WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL LIMIT 1`,
+          [cleanEmail]
+        );
+        if (dupEmail.rows.length > 0) {
+          throw new Error("DUPLICATE_EMAIL");
+        }
+      }
+    });
+
     const authUser = await this.authService.createAuthUser({
       email: cleanEmail,
-      password,
-      role: "CUSTOMER",
+      phone: phoneNorm.e164Number,
+      password: String(password),
+      role: cleanRole,
       username: cleanUsername
     });
 
@@ -1031,27 +1630,309 @@ export class VeloTrackEngine {
       const res = await tx.query(
         `INSERT INTO public.users_profile (
            id, username, email, phone, full_name, role, must_change_password, is_active
-         ) VALUES ($1, $2, $3, $4, $5, 'CUSTOMER', FALSE, TRUE)
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
          RETURNING id, username, email, phone, full_name, role, must_change_password, is_active, created_at`,
-        [authUser.id, cleanUsername, cleanEmail, String(phone ?? "").trim(), String(fullName).trim()]
+        [
+          authUser.id,
+          cleanUsername,
+          cleanEmail,
+          phoneNorm.e164Number,
+          cleanFullName,
+          cleanRole,
+          Boolean(mustChangePassword)
+        ]
       );
       return this._mapUserRow(res.rows[0]);
     });
   }
 
-  async listUsers(actorClaims) {
+  async createCustomerAccount(actorClaims, input) {
+    return this.createUserAccount(actorClaims, {
+      ...input,
+      role: input.role ?? "CUSTOMER"
+    });
+  }
+
+  async _isPrimaryAdmin(tx, userId) {
+    const bootRes = await tx.query(
+      `SELECT admin_user_id FROM public.bootstrap_state WHERE id = 1`
+    );
+    if (bootRes.rows[0]?.admin_user_id === userId) return true;
+    const uRes = await tx.query(
+      `SELECT username, role FROM public.users_profile WHERE id = $1`,
+      [userId]
+    );
+    return (
+      uRes.rows[0]?.role === "ADMIN" &&
+      String(uRes.rows[0]?.username ?? "").toLowerCase() === "admin"
+    );
+  }
+
+  async updateUserAccount(
+    actorClaims,
+    userId,
+    { fullName, phone, username, email, role, password }
+  ) {
+    if (actorClaims.role !== "ADMIN") {
+      throw new Error("FORBIDDEN_ADMIN_ONLY");
+    }
+
+    const existing = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      await this._assertActiveAndPasswordUpdated(tx, actorClaims);
+      const uRes = await tx.query(
+        `SELECT * FROM public.users_profile WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [userId]
+      );
+      if (uRes.rows.length === 0) throw new Error("USER_NOT_FOUND");
+      const isPrimary = await this._isPrimaryAdmin(tx, userId);
+      return { row: uRes.rows[0], isPrimary };
+    });
+
+    const nextFullName =
+      fullName !== undefined ? String(fullName).trim() : existing.row.full_name;
+    const nextUsername =
+      username !== undefined ? String(username).trim() : existing.row.username;
+    const nextRole =
+      role !== undefined ? String(role).toUpperCase().trim() : existing.row.role;
+    const nextEmail =
+      email !== undefined
+        ? String(email ?? "").trim()
+          ? String(email).toLowerCase().trim()
+          : null
+        : existing.row.email;
+
+    let nextPhone = existing.row.phone;
+    if (phone !== undefined) {
+      const pNorm = normalizeEgyptianPhone(phone);
+      if (!pNorm.isValid) throw new Error("INVALID_CUSTOMER_INPUT");
+      nextPhone = pNorm.e164Number;
+    }
+
+    if (!nextFullName || !nextUsername || !["ADMIN", "CUSTOMER"].includes(nextRole)) {
+      throw new Error("INVALID_CUSTOMER_INPUT");
+    }
+    if (existing.isPrimary && nextRole !== "ADMIN") {
+      throw new Error("CANNOT_DEMOTE_PRIMARY_ADMIN");
+    }
+
+    await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      const dupU = await tx.query(
+        `SELECT id FROM public.users_profile
+         WHERE LOWER(username) = LOWER($1) AND id <> $2 AND deleted_at IS NULL LIMIT 1`,
+        [nextUsername, userId]
+      );
+      if (dupU.rows.length > 0) throw new Error("DUPLICATE_USERNAME");
+
+      const dupP = await tx.query(
+        `SELECT id FROM public.users_profile
+         WHERE phone = $1 AND id <> $2 AND deleted_at IS NULL LIMIT 1`,
+        [nextPhone, userId]
+      );
+      if (dupP.rows.length > 0) throw new Error("DUPLICATE_PHONE");
+
+      if (nextEmail) {
+        const dupE = await tx.query(
+          `SELECT id FROM public.users_profile
+           WHERE LOWER(email) = LOWER($1) AND id <> $2 AND deleted_at IS NULL LIMIT 1`,
+          [nextEmail, userId]
+        );
+        if (dupE.rows.length > 0) throw new Error("DUPLICATE_EMAIL");
+      }
+    });
+
+    await this.authService.updateAuthUserMetadata({
+      userId,
+      email: nextEmail,
+      phone: nextPhone,
+      role: nextRole,
+      username: nextUsername
+    });
+
+    if (password && String(password).trim().length > 0) {
+      if (String(password).length < 8) {
+        throw new Error("WEAK_NEW_PASSWORD");
+      }
+      await this.authService.updateAuthUserPassword({
+        userId,
+        newPassword: String(password)
+      });
+    }
+
+    return this.db.runTenantTransaction(actorClaims, async (tx) => {
+      const res = await tx.query(
+        `UPDATE public.users_profile
+         SET full_name = $2,
+             username = $3,
+             phone = $4,
+             email = $5,
+             role = $6,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, username, email, phone, full_name, role, must_change_password, is_active, created_at`,
+        [userId, nextFullName, nextUsername, nextPhone, nextEmail, nextRole]
+      );
+      return this._mapUserRow(res.rows[0]);
+    });
+  }
+
+  async setUserActiveStatus(actorClaims, userId, { isActive }) {
     if (actorClaims.role !== "ADMIN") {
       throw new Error("FORBIDDEN_ADMIN_ONLY");
     }
     return this.db.runTenantTransaction(actorClaims, async (tx) => {
       await this._assertActiveAndPasswordUpdated(tx, actorClaims);
+      const uRes = await tx.query(
+        `SELECT * FROM public.users_profile WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [userId]
+      );
+      if (uRes.rows.length === 0) throw new Error("USER_NOT_FOUND");
+      const isPrimary = await this._isPrimaryAdmin(tx, userId);
+      if (!isActive && (isPrimary || userId === actorClaims.userId)) {
+        throw new Error("CANNOT_DEACTIVATE_PRIMARY_ADMIN");
+      }
       const res = await tx.query(
-        `SELECT id, username, email, phone, full_name, role, must_change_password, is_active, created_at
-         FROM public.users_profile
-         ORDER BY created_at ASC`
+        `UPDATE public.users_profile
+         SET is_active = $2, updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, username, email, phone, full_name, role, must_change_password, is_active, created_at`,
+        [userId, Boolean(isActive)]
+      );
+      return this._mapUserRow(res.rows[0]);
+    });
+  }
+
+  async deleteUserAccount(actorClaims, userId) {
+    if (actorClaims.role !== "ADMIN") {
+      throw new Error("FORBIDDEN_ADMIN_ONLY");
+    }
+    return this.db.runTenantTransaction(actorClaims, async (tx) => {
+      await this._assertActiveAndPasswordUpdated(tx, actorClaims);
+      const uRes = await tx.query(
+        `SELECT * FROM public.users_profile WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [userId]
+      );
+      if (uRes.rows.length === 0) throw new Error("USER_NOT_FOUND");
+      const isPrimary = await this._isPrimaryAdmin(tx, userId);
+      if (isPrimary || userId === actorClaims.userId) {
+        throw new Error("CANNOT_DELETE_PRIMARY_ADMIN");
+      }
+      const devCountRes = await tx.query(
+        `SELECT COUNT(*)::int AS cnt FROM public.devices WHERE current_customer_id = $1`,
+        [userId]
+      );
+      if ((devCountRes.rows[0]?.cnt ?? 0) > 0) {
+        throw new Error("USER_HAS_ASSIGNED_VEHICLES");
+      }
+      const res = await tx.query(
+        `UPDATE public.users_profile
+         SET is_active = FALSE,
+             deleted_at = NOW(),
+             deleted_by = $2,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, username, email, phone, full_name, role, must_change_password, is_active, deleted_at, created_at`,
+        [userId, actorClaims.userId]
+      );
+      return {
+        deleted: true,
+        userId,
+        user: this._mapUserRow(res.rows[0])
+      };
+    });
+  }
+
+  async listUsers(actorClaims, nowMs = Date.now()) {
+    if (actorClaims.role !== "ADMIN") {
+      throw new Error("FORBIDDEN_ADMIN_ONLY");
+    }
+    await this._enforceAllExpiredSubscriptions(nowMs);
+    return this.db.runTenantTransaction(actorClaims, async (tx) => {
+      await this._assertActiveAndPasswordUpdated(tx, actorClaims);
+      const res = await tx.query(
+        `SELECT
+           u.id, u.username, u.email, u.phone, u.full_name, u.role,
+           u.must_change_password, u.is_active, u.deleted_at, u.created_at,
+           COUNT(DISTINCT d.id)::int AS vehicle_count,
+           COUNT(DISTINCT s.id)::int AS subscription_count,
+           COUNT(DISTINCT CASE WHEN s.status = 'ACTIVE' THEN s.id END)::int AS active_subscription_count,
+           COUNT(DISTINCT CASE WHEN s.status = 'AWAITING_FIRST_CONNECTION' THEN s.id END)::int AS pending_subscription_count,
+           COUNT(DISTINCT CASE WHEN s.status = 'EXPIRED' THEN s.id END)::int AS expired_subscription_count,
+           COUNT(DISTINCT CASE WHEN s.status = 'SUSPENDED' THEN s.id END)::int AS suspended_subscription_count
+         FROM public.users_profile u
+         LEFT JOIN public.devices d ON d.current_customer_id = u.id
+         LEFT JOIN public.subscriptions s ON s.device_id = d.id
+         WHERE u.deleted_at IS NULL
+         GROUP BY u.id
+         ORDER BY u.created_at ASC`
       );
       return res.rows.map((r) => this._mapUserRow(r));
     });
+  }
+
+  /**
+   * Dedicated Customer / User Details with independent per-vehicle subscription breakdown.
+   */
+  async getCustomerDetails(actorClaims, targetUserId, nowMs = Date.now()) {
+    if (actorClaims.role !== "ADMIN" && actorClaims.userId !== targetUserId) {
+      throw new Error("FORBIDDEN_TENANT_ISOLATION");
+    }
+    await this._enforceAllExpiredSubscriptions(nowMs);
+
+    const userRow = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      await this._assertActiveAndPasswordUpdated(tx, actorClaims);
+      const uRes = await tx.query(
+        `SELECT * FROM public.users_profile WHERE id = $1 AND deleted_at IS NULL`,
+        [targetUserId]
+      );
+      return uRes.rows[0] ?? null;
+    });
+
+    if (!userRow) {
+      throw new Error("CUSTOMER_NOT_FOUND");
+    }
+
+    const allBundles = await this.listAuthorizedDevices(actorClaims, nowMs);
+    const vehicles = allBundles.filter((b) => b.device.currentCustomerId === targetUserId);
+
+    const activeCnt = vehicles.filter((v) => v.subscription?.status === "ACTIVE").length;
+    const pendingCnt = vehicles.filter(
+      (v) => v.subscription?.status === "AWAITING_FIRST_CONNECTION"
+    ).length;
+    const expiredCnt = vehicles.filter((v) => v.subscription?.status === "EXPIRED").length;
+    const suspendedCnt = vehicles.filter((v) => v.subscription?.status === "SUSPENDED").length;
+
+    const summary = {
+      totalVehicles: vehicles.length,
+      totalSubscriptions: vehicles.filter((v) => v.subscription !== null).length,
+      activeSubscriptions: activeCnt,
+      activeSubscriptionsCount: activeCnt,
+      pendingSubscriptions: pendingCnt,
+      pendingSubscriptionsCount: pendingCnt,
+      expiredSubscriptions: expiredCnt,
+      expiredSubscriptionsCount: expiredCnt,
+      suspendedSubscriptions: suspendedCnt,
+      suspendedSubscriptionsCount: suspendedCnt,
+      onlineVehicles: vehicles.filter((v) =>
+        String(v.device.connectionState ?? "").startsWith("ONLINE")
+      ).length
+    };
+
+    const mappedCustomer = this._mapUserRow({
+      ...userRow,
+      vehicle_count: summary.totalVehicles,
+      subscription_count: summary.totalSubscriptions,
+      active_subscription_count: summary.activeSubscriptions,
+      pending_subscription_count: summary.pendingSubscriptions,
+      expired_subscription_count: summary.expiredSubscriptions,
+      suspended_subscription_count: summary.suspendedSubscriptions
+    });
+
+    return {
+      customer: mappedCustomer,
+      user: mappedCustomer,
+      summary,
+      vehicles
+    };
   }
 
   async listDeviceProfiles(actorClaims) {
@@ -1072,6 +1953,13 @@ export class VeloTrackEngine {
     if (!serverCmd || /APN/i.test(serverCmd) || /TIMER/i.test(serverCmd)) {
       throw new Error("INVALID_PROFILE_COMMAND_POLICY");
     }
+    const protocol = String(input.traccarProtocol ?? "gt06").toLowerCase().trim();
+    const defaultCommands =
+      PROTOCOL_SUPPORTED_COMMANDS[protocol] ?? ["positionSingle", "engineStop", "engineResume", "custom"];
+    const supportedCommands = Array.isArray(input.supportedCommands)
+      ? input.supportedCommands.filter((c) => c in OFFICIAL_TRACCAR_COMMANDS)
+      : defaultCommands;
+
     return this.db.runTenantTransaction(actorClaims, async (tx) => {
       await this._assertActiveAndPasswordUpdated(tx, actorClaims);
       const res = await tx.query(
@@ -1081,14 +1969,14 @@ export class VeloTrackEngine {
            requires_device_password, default_device_password,
            requires_gprson_command, server_command_template,
            gprson_command_template, optional_timer_command_template,
-           expected_reply_pattern, is_verified
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+           expected_reply_pattern, supported_commands, is_verified
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17)
          RETURNING *`,
         [
           String(input.manufacturer ?? "").trim(),
           String(input.model ?? "").trim(),
           String(input.firmwareVersion ?? "").trim(),
-          input.traccarProtocol ?? "gt06",
+          protocol,
           String(input.serverHost ?? "").trim(),
           Number(input.serverPort ?? 5023),
           input.transport ?? "TCP",
@@ -1100,6 +1988,7 @@ export class VeloTrackEngine {
           input.requiresGprsonCommand ? (input.gprsonCommandTemplate ?? "GPRSON,1#") : null,
           input.optionalTimerCommandTemplate ?? null,
           input.expectedReplyPattern ?? null,
+          JSON.stringify(supportedCommands),
           Boolean(input.isVerified ?? false)
         ]
       );
@@ -1126,14 +2015,15 @@ export class VeloTrackEngine {
   }
 
   /**
-   * Provisions a device in Traccar and Supabase PostgreSQL inside a transaction,
-   * and dispatches verified SMS commands via the real SMS gateway adapter.
+   * Provisions a vehicle & GPS device in Traccar and Supabase PostgreSQL with safe rollback
+   * if database insertion fails, and optionally dispatches idempotent activation SMS commands.
    */
   async provisionAndActivateDevice(actorClaims, input) {
     if (actorClaims.role !== "ADMIN") {
       throw new Error("FORBIDDEN_ADMIN_ONLY");
     }
-    if (!isValidImei(input.imei)) {
+    const cleanImei = String(input.imei ?? "").trim();
+    if (!isValidImei(cleanImei)) {
       throw new Error("INVALID_IMEI");
     }
     const sim = normalizeEgyptianSim(input.simLocalWithoutPlus20);
@@ -1141,9 +2031,22 @@ export class VeloTrackEngine {
       throw new Error(`INVALID_SIM:${sim.errorReason}`);
     }
 
+    const vehicleType = VEHICLE_TYPES.includes(String(input.vehicleType ?? "CAR").toUpperCase())
+      ? String(input.vehicleType ?? "CAR").toUpperCase()
+      : "CAR";
+    const vehicleIcon = VEHICLE_ICONS.includes(String(input.vehicleIcon ?? "car").toLowerCase())
+      ? String(input.vehicleIcon ?? "car").toLowerCase()
+      : "car";
+    const serialNumber =
+      input.serialNumber && String(input.serialNumber).trim()
+        ? String(input.serialNumber).trim()
+        : null;
+    const sendActivationSms =
+      input.sendActivationSms !== false && input.sendActivationSmsNow !== false;
+
     const { profile, customer } = await this.db.runTenantTransaction(actorClaims, async (tx) => {
       await this._assertActiveAndPasswordUpdated(tx, actorClaims);
-      const dupRes = await tx.query(`SELECT id FROM public.devices WHERE imei = $1`, [input.imei]);
+      const dupRes = await tx.query(`SELECT id FROM public.devices WHERE imei = $1`, [cleanImei]);
       if (dupRes.rows.length > 0) {
         throw new Error("DUPLICATE_IMEI");
       }
@@ -1152,10 +2055,13 @@ export class VeloTrackEngine {
       ]);
       if (profRes.rows.length === 0) throw new Error("PROFILE_NOT_FOUND");
       const prof = this._mapProfileRow(profRes.rows[0]);
-      if (!prof.isVerified) throw new Error("PROFILE_NOT_VERIFIED_FOR_SMS");
+      if (sendActivationSms && !prof.isVerified) {
+        throw new Error("PROFILE_NOT_VERIFIED_FOR_SMS");
+      }
 
       const custRes = await tx.query(
-        `SELECT * FROM public.users_profile WHERE id = $1 AND role = 'CUSTOMER' AND is_active = TRUE`,
+        `SELECT * FROM public.users_profile
+         WHERE id = $1 AND role = 'CUSTOMER' AND is_active = TRUE AND deleted_at IS NULL`,
         [input.customerId]
       );
       if (custRes.rows.length === 0) throw new Error("CUSTOMER_NOT_FOUND");
@@ -1164,47 +2070,140 @@ export class VeloTrackEngine {
 
     // 1. Register in real Traccar Server via POST /api/devices
     const traccarDevice = await this.traccarClient.registerDeviceInTraccar({
-      name: input.vehicleName,
-      imei: input.imei
+      name: String(input.vehicleName ?? "").trim(),
+      imei: cleanImei,
+      category: vehicleIcon
     });
 
-    // 2. Persist device, subscription (AWAITING_FIRST_CONNECTION), history, and queued SMS logs in a transaction
-    const provisioned = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+    // 2. Persist device, subscription (AWAITING_FIRST_CONNECTION), and history in a transaction.
+    //    If DB transaction fails, delete the newly created Traccar device to prevent orphans.
+    let provisioned;
+    try {
+      provisioned = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+        const devRes = await tx.query(
+          `INSERT INTO public.devices (
+             imei, serial_number, traccar_device_id, profile_id, current_customer_id,
+             vehicle_name, vehicle_type, vehicle_icon, plate_number,
+             sim_local_number, sim_e164_number,
+             activation_status, connection_state, has_valid_fix
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'PENDING','OFFLINE',FALSE)
+           RETURNING *`,
+          [
+            cleanImei,
+            serialNumber,
+            traccarDevice.id,
+            profile.id,
+            customer.id,
+            String(input.vehicleName ?? "").trim(),
+            vehicleType,
+            vehicleIcon,
+            String(input.plateNumber ?? "").trim(),
+            sim.localNumber,
+            sim.e164Number
+          ]
+        );
+        const dev = this._mapDeviceRow(devRes.rows[0]);
+
+        const subRes = await tx.query(
+          `INSERT INTO public.subscriptions (
+             device_id, customer_id, plan_duration, status, started_at, expires_at
+           ) VALUES ($1,$2,$3,'AWAITING_FIRST_CONNECTION',NULL,NULL)
+           RETURNING *`,
+          [dev.id, customer.id, input.planDuration]
+        );
+        const sub = this._mapSubscriptionRow(subRes.rows[0]);
+
+        await tx.query(
+          `INSERT INTO public.subscription_history (
+             device_id, customer_id, action_type, plan_duration, actor_user_id, notes
+           ) VALUES ($1,$2,'PROVISIONED',$3,$4,'Provisioned awaiting 1st Traccar connection')`,
+          [dev.id, customer.id, input.planDuration, actorClaims.userId]
+        );
+
+        return { device: dev, subscription: sub };
+      });
+    } catch (dbErr) {
+      await this.traccarClient.deleteDeviceInTraccar(traccarDevice.id).catch(() => {});
+      throw dbErr;
+    }
+
+    if (!sendActivationSms) {
+      await this._notifyListeners({ type: "DEVICE_UPDATE", deviceIds: [provisioned.device.id] });
+      return {
+        device: provisioned.device,
+        subscription: provisioned.subscription,
+        smsLogs: []
+      };
+    }
+
+    const smsResult = await this.sendDeviceActivationSms(actorClaims, {
+      deviceId: provisioned.device.id,
+      idempotencyKey: input.idempotencyKey ?? null
+    });
+
+    return {
+      device: smsResult.device,
+      subscription: provisioned.subscription,
+      smsLogs: smsResult.smsLogs,
+      duplicatePrevented: Boolean(smsResult.duplicatePrevented)
+    };
+  }
+
+  /**
+   * Dispatches profile-specific SMS activation commands for an existing device with
+   * idempotency protection so repeated clicks or network retries never send duplicate SMS messages.
+   */
+  async sendDeviceActivationSms(
+    actorClaims,
+    { deviceId, idempotencyKey = null, forceResend = false }
+  ) {
+    if (actorClaims.role !== "ADMIN") {
+      throw new Error("FORBIDDEN_ADMIN_ONLY");
+    }
+
+    const prep = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      await this._assertActiveAndPasswordUpdated(tx, actorClaims);
       const devRes = await tx.query(
-        `INSERT INTO public.devices (
-           imei, traccar_device_id, profile_id, current_customer_id,
-           vehicle_name, plate_number, sim_local_number, sim_e164_number,
-           activation_status, connection_state, has_valid_fix
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'PENDING','OFFLINE',FALSE)
-         RETURNING *`,
-        [
-          input.imei,
-          traccarDevice.id,
-          profile.id,
-          customer.id,
-          String(input.vehicleName).trim(),
-          String(input.plateNumber).trim(),
-          sim.localNumber,
-          sim.e164Number
-        ]
+        `SELECT * FROM public.devices WHERE id = $1 FOR UPDATE`,
+        [deviceId]
       );
+      if (devRes.rows.length === 0) throw new Error("DEVICE_NOT_FOUND");
       const dev = this._mapDeviceRow(devRes.rows[0]);
 
-      const subRes = await tx.query(
-        `INSERT INTO public.subscriptions (
-           device_id, customer_id, plan_duration, status, started_at, expires_at
-         ) VALUES ($1,$2,$3,'AWAITING_FIRST_CONNECTION',NULL,NULL)
-         RETURNING *`,
-        [dev.id, customer.id, input.planDuration]
-      );
-      const sub = this._mapSubscriptionRow(subRes.rows[0]);
+      const profRes = await tx.query(`SELECT * FROM public.device_profiles WHERE id = $1`, [
+        dev.profileId
+      ]);
+      if (profRes.rows.length === 0) throw new Error("PROFILE_NOT_FOUND");
+      const profile = this._mapProfileRow(profRes.rows[0]);
+      if (!profile.isVerified) {
+        throw new Error("PROFILE_NOT_VERIFIED_FOR_SMS");
+      }
 
-      await tx.query(
-        `INSERT INTO public.subscription_history (
-           device_id, customer_id, action_type, plan_duration, actor_user_id, notes
-         ) VALUES ($1,$2,'PROVISIONED',$3,$4,'Provisioned awaiting 1st Traccar connection')`,
-        [dev.id, customer.id, input.planDuration, actorClaims.userId]
+      const existingLogsRes = await tx.query(
+        `SELECT * FROM public.activation_sms_logs
+         WHERE device_id = $1
+         ORDER BY step_order ASC
+         FOR UPDATE`,
+        [deviceId]
       );
+      const existingLogs = existingLogsRes.rows.map((r) => this._mapSmsLogRow(r));
+
+      const hasActiveLogs = existingLogs.some((l) =>
+        ["QUEUED", "ACCEPTED", "SENT", "DELIVERED", "REPLIED"].includes(l.status)
+      );
+      const matchesIdempotency =
+        idempotencyKey &&
+        existingLogs.some(
+          (l) => l.idempotencyKey === `${idempotencyKey}:1` || l.idempotencyKey === idempotencyKey
+        );
+
+      if ((hasActiveLogs || matchesIdempotency) && !forceResend) {
+        return {
+          alreadySent: true,
+          device: dev,
+          smsLogs: existingLogs
+        };
+      }
 
       const commands = [
         { stepOrder: 1, commandKey: "SERVER", commandText: profile.serverCommandTemplate }
@@ -1217,27 +2216,41 @@ export class VeloTrackEngine {
         });
       }
 
-      const logs = [];
+      const baseOrder = existingLogs.length;
+      const queuedLogs = [];
       for (const cmd of commands) {
+        const stepOrder = baseOrder + cmd.stepOrder;
+        const stepIdemKey = idempotencyKey ? `${idempotencyKey}:${stepOrder}` : null;
         const logRes = await tx.query(
           `INSERT INTO public.activation_sms_logs (
-             device_id, step_order, command_key, command_text, status
-           ) VALUES ($1,$2,$3,$4,'QUEUED')
+             device_id, step_order, command_key, command_text, idempotency_key, status
+           ) VALUES ($1,$2,$3,$4,$5,'QUEUED')
            RETURNING *`,
-          [dev.id, cmd.stepOrder, cmd.commandKey, cmd.commandText]
+          [dev.id, stepOrder, cmd.commandKey, cmd.commandText, stepIdemKey]
         );
-        logs.push(this._mapSmsLogRow(logRes.rows[0]));
+        queuedLogs.push(this._mapSmsLogRow(logRes.rows[0]));
       }
 
-      return { device: dev, subscription: sub, smsLogs: logs };
+      return {
+        alreadySent: false,
+        device: dev,
+        smsLogs: queuedLogs
+      };
     });
 
-    // 3. Dispatch SMS commands via the real SMS gateway adapter and persist actual status
+    if (prep.alreadySent) {
+      return {
+        device: prep.device,
+        smsLogs: prep.smsLogs,
+        duplicatePrevented: true
+      };
+    }
+
     const updatedLogs = [];
-    for (const logEntry of provisioned.smsLogs) {
+    for (const logEntry of prep.smsLogs) {
       try {
         const gwRes = await this.smsGateway.sendSms({
-          toE164: sim.e164Number,
+          toE164: prep.device.simE164Number,
           text: logEntry.commandText
         });
         const savedLog = await this.db.runTenantTransaction(actorClaims, async (tx) => {
@@ -1261,8 +2274,11 @@ export class VeloTrackEngine {
             [logEntry.id, err.message]
           );
           await tx.query(
-            `UPDATE public.devices SET activation_status = 'FAILED' WHERE id = $1`,
-            [provisioned.device.id]
+            `UPDATE public.devices
+             SET activation_status = CASE WHEN activation_status = 'ACTIVATED' THEN 'ACTIVATED' ELSE 'FAILED' END,
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [prep.device.id]
           );
         });
         throw err;
@@ -1272,22 +2288,135 @@ export class VeloTrackEngine {
     const finalDevice = await this.db.runTenantTransaction(actorClaims, async (tx) => {
       const r = await tx.query(
         `UPDATE public.devices
-         SET activation_status = 'SMS_SENT'
+         SET activation_status = CASE WHEN activation_status = 'ACTIVATED' THEN 'ACTIVATED' ELSE 'SMS_SENT' END,
+             updated_at = NOW()
          WHERE id = $1
          RETURNING *`,
-        [provisioned.device.id]
+        [prep.device.id]
       );
       return this._mapDeviceRow(r.rows[0]);
     });
 
     await this._notifyListeners({ type: "DEVICE_UPDATE", deviceIds: [finalDevice.id] });
-    return { device: finalDevice, subscription: provisioned.subscription, smsLogs: updatedLogs };
+    return {
+      device: finalDevice,
+      smsLogs: updatedLogs,
+      duplicatePrevented: false
+    };
   }
 
   /**
-   * Handles real SMS gateway status callbacks (SENT, DELIVERED, FAILED, TIMED_OUT).
-   * SMS delivery NEVER activates the device or starts the subscription.
+   * Updates vehicle details (name, type, icon, plate, serialNumber, SIM, profile).
    */
+  async updateVehicleMetadata(actorClaims, deviceId, input) {
+    const updated = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      await this._assertActiveAndPasswordUpdated(tx, actorClaims);
+      const devRes = await tx.query(
+        `SELECT * FROM public.devices WHERE id = $1 FOR UPDATE`,
+        [deviceId]
+      );
+      if (devRes.rows.length === 0) {
+        return null;
+      }
+      const existing = devRes.rows[0];
+
+      const nextName =
+        input.vehicleName !== undefined
+          ? String(input.vehicleName).trim()
+          : existing.vehicle_name;
+      const nextPlate =
+        input.plateNumber !== undefined
+          ? String(input.plateNumber).trim()
+          : existing.plate_number;
+      const nextType =
+        input.vehicleType !== undefined
+          ? String(input.vehicleType).toUpperCase().trim()
+          : existing.vehicle_type;
+      const nextIcon =
+        input.vehicleIcon !== undefined
+          ? String(input.vehicleIcon).toLowerCase().trim()
+          : existing.vehicle_icon;
+
+      if (!nextName || !VEHICLE_TYPES.includes(nextType) || !VEHICLE_ICONS.includes(nextIcon)) {
+        throw new Error("INVALID_VEHICLE_METADATA");
+      }
+
+      let nextSerial = existing.serial_number;
+      let nextSimLocal = existing.sim_local_number;
+      let nextSimE164 = existing.sim_e164_number;
+      let nextProfileId = existing.profile_id;
+
+      if (actorClaims.role === "ADMIN") {
+        if (input.serialNumber !== undefined) {
+          nextSerial = String(input.serialNumber ?? "").trim() || null;
+        }
+        if (input.simLocalWithoutPlus20 !== undefined) {
+          const simNorm = normalizeEgyptianSim(input.simLocalWithoutPlus20);
+          if (!simNorm.isValid) {
+            throw new Error(`INVALID_SIM:${simNorm.errorReason}`);
+          }
+          nextSimLocal = simNorm.localNumber;
+          nextSimE164 = simNorm.e164Number;
+        }
+        if (input.profileId !== undefined && input.profileId !== existing.profile_id) {
+          const pRes = await tx.query(`SELECT id FROM public.device_profiles WHERE id = $1`, [
+            input.profileId
+          ]);
+          if (pRes.rows.length === 0) throw new Error("PROFILE_NOT_FOUND");
+          nextProfileId = input.profileId;
+        }
+      }
+
+      const uRes = await tx.query(
+        `UPDATE public.devices
+         SET vehicle_name = $2,
+             vehicle_type = $3,
+             vehicle_icon = $4,
+             plate_number = $5,
+             serial_number = $6,
+             sim_local_number = $7,
+             sim_e164_number = $8,
+             profile_id = $9,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [
+          deviceId,
+          nextName,
+          nextType,
+          nextIcon,
+          nextPlate,
+          nextSerial,
+          nextSimLocal,
+          nextSimE164,
+          nextProfileId
+        ]
+      );
+      return this._mapDeviceRow(uRes.rows[0]);
+    });
+
+    if (!updated) {
+      const existsInSystem = await this.db.runSystemTransaction(async (tx) => {
+        const r = await tx.query(`SELECT id FROM public.devices WHERE id = $1`, [deviceId]);
+        return r.rows.length > 0;
+      });
+      if (existsInSystem) throw new Error("FORBIDDEN_TENANT_ISOLATION");
+      throw new Error("DEVICE_NOT_FOUND");
+    }
+
+    await this.traccarClient
+      .updateDeviceInTraccar({
+        traccarDeviceId: updated.traccarDeviceId,
+        name: updated.vehicleName,
+        imei: updated.imei,
+        category: updated.vehicleIcon
+      })
+      .catch(() => {});
+
+    await this._notifyListeners({ type: "DEVICE_UPDATE", deviceIds: [deviceId] });
+    return { ...updated, device: updated };
+  }
+
   async handleSmsDeliveryWebhook({
     gatewayMessageId,
     deliveryStatus,
@@ -1335,7 +2464,7 @@ export class VeloTrackEngine {
       );
       const updatedDevRes = await tx.query(
         `UPDATE public.devices
-         SET activation_status = $2
+         SET activation_status = $2, updated_at = NOW()
          WHERE id = $1
          RETURNING *`,
         [devRow.id, nextDeviceStatus]
@@ -1351,10 +2480,6 @@ export class VeloTrackEngine {
     return result;
   }
 
-  /**
-   * Handles real inbound SMS reply from the tracker SIM (+20...).
-   * Never activates the device or starts the subscription!
-   */
   async handleInboundSmsReply({ fromE164, replyText, timestampMs = Date.now() }) {
     const result = await this.db.runSystemTransaction(async (tx) => {
       const devRes = await tx.query(
@@ -1396,7 +2521,7 @@ export class VeloTrackEngine {
           : devRow.activation_status;
 
       const uDev = await tx.query(
-        `UPDATE public.devices SET activation_status = $2 WHERE id = $1 RETURNING *`,
+        `UPDATE public.devices SET activation_status = $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
         [devRow.id, nextStatus]
       );
 
@@ -1410,11 +2535,6 @@ export class VeloTrackEngine {
     return result;
   }
 
-  /**
-   * Correlates real Traccar WebSocket/REST updates with VeloTrack devices in Supabase PostgreSQL.
-   * Starts the subscription clock ONLY upon the first genuine Traccar connection.
-   * Distinguishes indoor login/heartbeat without GPS fix from full satellite GPS fix.
-   */
   async ingestTraccarUpdate({ traccarDevices = [], traccarPositions = [], eventTimeMs = Date.now() }) {
     const updatedDeviceIds = [];
     const newlyActivatedSubs = [];
@@ -1442,7 +2562,8 @@ export class VeloTrackEngine {
              SET activation_status = 'ACTIVATED',
                  connection_state = $2,
                  first_connected_at = $3,
-                 last_seen_at = $4
+                 last_seen_at = $4,
+                 updated_at = NOW()
              WHERE id = $1`,
             [devRow.id, nextConnState, firstConnIso, new Date(seenMs).toISOString()]
           );
@@ -1456,7 +2577,7 @@ export class VeloTrackEngine {
           updatedDeviceIds.push(devRow.id);
         } else if (tcDev.status === "offline") {
           await tx.query(
-            `UPDATE public.devices SET connection_state = 'OFFLINE' WHERE id = $1`,
+            `UPDATE public.devices SET connection_state = 'OFFLINE', updated_at = NOW() WHERE id = $1`,
             [devRow.id]
           );
           updatedDeviceIds.push(devRow.id);
@@ -1511,7 +2632,8 @@ export class VeloTrackEngine {
                last_heading = $7,
                ignition_on = $8,
                first_connected_at = $9,
-               last_seen_at = $10
+               last_seen_at = $10,
+               updated_at = NOW()
            WHERE id = $1`,
           [
             devRow.id,
@@ -1620,7 +2742,8 @@ export class VeloTrackEngine {
       const uDev = await tx.query(
         `UPDATE public.devices
          SET activation_status = 'ACTIVATED',
-             first_connected_at = COALESCE(first_connected_at, $2)
+             first_connected_at = COALESCE(first_connected_at, $2),
+             updated_at = NOW()
          WHERE id = $1
          RETURNING *`,
         [deviceId, new Date(nowMs).toISOString()]
@@ -1669,6 +2792,17 @@ export class VeloTrackEngine {
     }
     await this._notifyListeners({ type: "DEVICE_UPDATE", deviceIds: [deviceId] });
     return result;
+  }
+
+  async _enforceAllExpiredSubscriptions(nowMs = Date.now()) {
+    await this.db.runSystemTransaction(async (tx) => {
+      const activeSubs = await tx.query(
+        `SELECT device_id FROM public.subscriptions WHERE status = 'ACTIVE' AND plan_duration <> 'LIFETIME'`
+      );
+      for (const row of activeSubs.rows) {
+        await this._enforceSubscriptionExpiryTx(tx, row.device_id, nowMs);
+      }
+    });
   }
 
   async enforceSubscriptionExpiry(deviceId, nowMs = Date.now()) {
@@ -1776,6 +2910,93 @@ export class VeloTrackEngine {
     return updatedSub;
   }
 
+  async suspendSubscription(actorClaims, { deviceId, reason = "Suspended by administrator", nowMs = Date.now() }) {
+    if (actorClaims.role !== "ADMIN") {
+      throw new Error("FORBIDDEN_ADMIN_ONLY");
+    }
+    const updatedSub = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      await this._assertActiveAndPasswordUpdated(tx, actorClaims);
+      const subRes = await tx.query(
+        `SELECT * FROM public.subscriptions WHERE device_id = $1 FOR UPDATE`,
+        [deviceId]
+      );
+      if (subRes.rows.length === 0) throw new Error("DEVICE_NOT_FOUND");
+      const subRow = subRes.rows[0];
+
+      const uSub = await tx.query(
+        `UPDATE public.subscriptions SET status = 'SUSPENDED' WHERE device_id = $1 RETURNING *`,
+        [deviceId]
+      );
+
+      await tx.query(
+        `INSERT INTO public.subscription_history (
+           device_id, customer_id, action_type, plan_duration, actor_user_id, notes, created_at
+         ) VALUES ($1,$2,'SUSPENDED',$3,$4,$5,$6)`,
+        [
+          deviceId,
+          subRow.customer_id,
+          subRow.plan_duration,
+          actorClaims.userId,
+          String(reason || "Suspended by administrator").trim(),
+          new Date(nowMs).toISOString()
+        ]
+      );
+
+      return this._mapSubscriptionRow(uSub.rows[0]);
+    });
+
+    await this._notifyListeners({ type: "DEVICE_UPDATE", deviceIds: [deviceId] });
+    return { ...updatedSub, subscription: updatedSub };
+  }
+
+  async resumeSubscription(actorClaims, { deviceId, reason = "Resumed by administrator", nowMs = Date.now() }) {
+    if (actorClaims.role !== "ADMIN") {
+      throw new Error("FORBIDDEN_ADMIN_ONLY");
+    }
+    const updatedSub = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      await this._assertActiveAndPasswordUpdated(tx, actorClaims);
+      const subRes = await tx.query(
+        `SELECT * FROM public.subscriptions WHERE device_id = $1 FOR UPDATE`,
+        [deviceId]
+      );
+      if (subRes.rows.length === 0) throw new Error("DEVICE_NOT_FOUND");
+      const sub = this._mapSubscriptionRow(subRes.rows[0]);
+
+      let nextStatus = "AWAITING_FIRST_CONNECTION";
+      if (sub.startedAtMs !== null) {
+        if (sub.planDuration === "LIFETIME" || (sub.expiresAtMs ?? 0) > nowMs) {
+          nextStatus = "ACTIVE";
+        } else {
+          nextStatus = "EXPIRED";
+        }
+      }
+
+      const uSub = await tx.query(
+        `UPDATE public.subscriptions SET status = $2 WHERE device_id = $1 RETURNING *`,
+        [deviceId, nextStatus]
+      );
+
+      await tx.query(
+        `INSERT INTO public.subscription_history (
+           device_id, customer_id, action_type, plan_duration, actor_user_id, notes, created_at
+         ) VALUES ($1,$2,'RESUMED',$3,$4,$5,$6)`,
+        [
+          deviceId,
+          sub.customerId,
+          sub.planDuration,
+          actorClaims.userId,
+          String(reason || "Resumed by administrator").trim(),
+          new Date(nowMs).toISOString()
+        ]
+      );
+
+      return this._mapSubscriptionRow(uSub.rows[0]);
+    });
+
+    await this._notifyListeners({ type: "DEVICE_UPDATE", deviceIds: [deviceId] });
+    return { ...updatedSub, subscription: updatedSub };
+  }
+
   async reassignCustomer(actorClaims, { deviceId, newCustomerId, reason, nowMs = Date.now() }) {
     if (actorClaims.role !== "ADMIN") {
       throw new Error("FORBIDDEN_ADMIN_ONLY");
@@ -1790,7 +3011,8 @@ export class VeloTrackEngine {
         [deviceId]
       );
       const custRes = await tx.query(
-        `SELECT * FROM public.users_profile WHERE id = $1 AND role = 'CUSTOMER' AND is_active = TRUE`,
+        `SELECT * FROM public.users_profile
+         WHERE id = $1 AND role = 'CUSTOMER' AND is_active = TRUE AND deleted_at IS NULL`,
         [newCustomerId]
       );
       if (devRes.rows.length === 0 || subRes.rows.length === 0 || custRes.rows.length === 0) {
@@ -1799,7 +3021,7 @@ export class VeloTrackEngine {
 
       const previousCustomerId = devRes.rows[0].current_customer_id;
       const uDev = await tx.query(
-        `UPDATE public.devices SET current_customer_id = $2 WHERE id = $1 RETURNING *`,
+        `UPDATE public.devices SET current_customer_id = $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
         [deviceId, newCustomerId]
       );
       const uSub = await tx.query(
@@ -1832,52 +3054,205 @@ export class VeloTrackEngine {
   }
 
   /**
-   * Lists devices visible to the caller, enforcing both PostgreSQL RLS (`SET LOCAL ROLE authenticated`)
-   * and server-side subscription expiration + coordinate redaction.
+   * Queries supported commands for a specific device based on its profile protocol
+   * and Traccar's `/api/commands/types` endpoint.
    */
-  async listAuthorizedDevices(actorClaims, nowMs = Date.now()) {
-    // First ensure any expired subscriptions are updated in DB
-    await this.db.runSystemTransaction(async (tx) => {
-      const activeSubs = await tx.query(
-        `SELECT device_id FROM public.subscriptions WHERE status = 'ACTIVE' AND plan_duration <> 'LIFETIME'`
-      );
-      for (const row of activeSubs.rows) {
-        await this._enforceSubscriptionExpiryTx(tx, row.device_id, nowMs);
-      }
+  async getSupportedDeviceCommands(actorClaims, deviceId) {
+    const { device, profile } = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      await this._assertActiveAndPasswordUpdated(tx, actorClaims);
+      const devRes = await tx.query(`SELECT * FROM public.devices WHERE id = $1`, [deviceId]);
+      if (devRes.rows.length === 0) return { device: null, profile: null };
+      const dev = this._mapDeviceRow(devRes.rows[0]);
+      const profRes = await tx.query(`SELECT * FROM public.device_profiles WHERE id = $1`, [
+        dev.profileId
+      ]);
+      const prof = profRes.rows[0] ? this._mapProfileRow(profRes.rows[0]) : null;
+      return { device: dev, profile: prof };
     });
+
+    if (!device) {
+      const existsInSystem = await this.db.runSystemTransaction(async (tx) => {
+        const r = await tx.query(`SELECT id FROM public.devices WHERE id = $1`, [deviceId]);
+        return r.rows.length > 0;
+      });
+      if (existsInSystem) throw new Error("FORBIDDEN_TENANT_ISOLATION");
+      throw new Error("DEVICE_NOT_FOUND");
+    }
+
+    const protocolDefaults =
+      PROTOCOL_SUPPORTED_COMMANDS[profile?.traccarProtocol ?? "gt06"] ??
+      ["positionSingle", "engineStop", "engineResume"];
+    const profileAllowed =
+      Array.isArray(profile?.supportedCommands) && profile.supportedCommands.length > 0
+        ? profile.supportedCommands
+        : protocolDefaults;
+
+    let traccarTypes = null;
+    try {
+      traccarTypes = await this.traccarClient.fetchSupportedCommandTypes(device.traccarDeviceId);
+    } catch {
+      traccarTypes = null;
+    }
+
+    const effectiveTypes = Array.isArray(traccarTypes) && traccarTypes.length > 0
+      ? profileAllowed.filter((t) => traccarTypes.includes(t))
+      : profileAllowed;
+
+    return effectiveTypes
+      .map((type) => OFFICIAL_TRACCAR_COMMANDS[type])
+      .filter(Boolean)
+      .filter((cmd) => (actorClaims.role === "ADMIN" ? true : cmd.customerPermitted));
+  }
+
+  /**
+   * Executes a supported Traccar command on a vehicle and writes an immutable audit record.
+   */
+  async sendAuthorizedDeviceCommand(
+    actorClaims,
+    { deviceId, type, parameters = {}, confirmedSensitive = false, nowMs = Date.now() }
+  ) {
+    const accessible = await this.enforceSubscriptionExpiry(deviceId, nowMs);
+    const supportedList = await this.getSupportedDeviceCommands(actorClaims, deviceId);
+
+    if (actorClaims.role === "CUSTOMER" && !accessible) {
+      throw new Error("SUBSCRIPTION_EXPIRED");
+    }
+
+    const cmdDef = supportedList.find((c) => c.type === type);
+    if (!cmdDef) {
+      throw new Error("UNSUPPORTED_DEVICE_COMMAND");
+    }
+
+    if (cmdDef.requiresConfirmation && !confirmedSensitive) {
+      throw new Error("SENSITIVE_COMMAND_CONFIRMATION_REQUIRED");
+    }
+
+    const deviceRow = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      const r = await tx.query(`SELECT * FROM public.devices WHERE id = $1`, [deviceId]);
+      return r.rows[0];
+    });
+
+    if (type === "custom") {
+      const customData = String(parameters?.data ?? "").trim();
+      if (!customData || /APN/i.test(customData) || /TIMER/i.test(customData)) {
+        throw new Error("INVALID_PROFILE_COMMAND_POLICY");
+      }
+    }
+
+    let status = "SENT";
+    let traccarResponse = null;
+    let failureReason = null;
+
+    try {
+      const sendRes = await this.traccarClient.sendDeviceCommand({
+        traccarDeviceId: deviceRow.traccar_device_id,
+        type,
+        attributes: parameters ?? {},
+        description: `VeloTrack ${actorClaims.role} command ${type}`
+      });
+      status = sendRes.queued ? "QUEUED" : "SENT";
+      traccarResponse = sendRes.response ?? {};
+    } catch (err) {
+      status = "FAILED";
+      failureReason = err.message;
+    }
+
+    const savedAudit = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      const ins = await tx.query(
+        `INSERT INTO public.device_commands (
+           device_id, traccar_device_id, actor_user_id, actor_role,
+           command_type, parameters, confirmed_sensitive,
+           traccar_response, status, failure_reason, created_at
+         ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb,$9,$10,$11)
+         RETURNING *`,
+        [
+          deviceId,
+          deviceRow.traccar_device_id,
+          actorClaims.userId,
+          actorClaims.role,
+          type,
+          JSON.stringify(parameters ?? {}),
+          Boolean(confirmedSensitive),
+          traccarResponse ? JSON.stringify(traccarResponse) : null,
+          status,
+          failureReason,
+          new Date(nowMs).toISOString()
+        ]
+      );
+      return this._mapCommandRow(ins.rows[0]);
+    });
+
+    await this._notifyListeners({ type: "DEVICE_UPDATE", deviceIds: [deviceId] });
+
+    if (status === "FAILED") {
+      throw new Error(failureReason ?? "TRACCAR_COMMAND_FAILED");
+    }
+    return savedAudit;
+  }
+
+  async listDeviceCommandHistory(actorClaims, deviceId) {
+    const exists = await this.db.runTenantTransaction(actorClaims, async (tx) => {
+      await this._assertActiveAndPasswordUpdated(tx, actorClaims);
+      const dRes = await tx.query(`SELECT id FROM public.devices WHERE id = $1`, [deviceId]);
+      if (dRes.rows.length === 0) return null;
+      const cRes = await tx.query(
+        `SELECT * FROM public.device_commands WHERE device_id = $1 ORDER BY created_at DESC`,
+        [deviceId]
+      );
+      return cRes.rows.map((r) => this._mapCommandRow(r));
+    });
+
+    if (exists === null) {
+      const existsInSystem = await this.db.runSystemTransaction(async (tx) => {
+        const r = await tx.query(`SELECT id FROM public.devices WHERE id = $1`, [deviceId]);
+        return r.rows.length > 0;
+      });
+      if (existsInSystem) throw new Error("FORBIDDEN_TENANT_ISOLATION");
+      throw new Error("DEVICE_NOT_FOUND");
+    }
+    return exists;
+  }
+
+  async listAuthorizedDevices(actorClaims, nowMs = Date.now()) {
+    await this._enforceAllExpiredSubscriptions(nowMs);
 
     return this.db.runTenantTransaction(actorClaims, async (tx) => {
       await this._assertActiveAndPasswordUpdated(tx, actorClaims);
 
-      // Because RLS is active on `public.devices`, a CUSTOMER query only returns rows where current_customer_id = request_user_id()
       const devRes = await tx.query(`SELECT * FROM public.devices ORDER BY created_at DESC`);
       const bundles = [];
 
       for (const dRow of devRes.rows) {
         const device = this._mapDeviceRow(dRow);
-        const [subRes, custRes, profRes, smsRes, subHistRes, ownHistRes] = await Promise.all([
-          tx.query(`SELECT * FROM public.subscriptions WHERE device_id = $1`, [device.id]),
-          tx.query(
-            `SELECT id, username, email, phone, full_name, role, must_change_password, is_active, created_at
-             FROM public.users_profile WHERE id = $1`,
-            [device.currentCustomerId]
-          ),
-          tx.query(`SELECT * FROM public.device_profiles WHERE id = $1`, [device.profileId]),
-          tx.query(
-            `SELECT * FROM public.activation_sms_logs WHERE device_id = $1 ORDER BY step_order ASC`,
-            [device.id]
-          ),
-          tx.query(
-            `SELECT * FROM public.subscription_history WHERE device_id = $1 ORDER BY created_at DESC`,
-            [device.id]
-          ),
-          tx.query(
-            `SELECT * FROM public.device_ownership_history WHERE device_id = $1 ORDER BY reassigned_at DESC`,
-            [device.id]
-          )
-        ]);
+        const [subRes, custRes, profRes, smsRes, subHistRes, ownHistRes, cmdRes] =
+          await Promise.all([
+            tx.query(`SELECT * FROM public.subscriptions WHERE device_id = $1`, [device.id]),
+            tx.query(
+              `SELECT id, username, email, phone, full_name, role, must_change_password, is_active, created_at
+               FROM public.users_profile WHERE id = $1`,
+              [device.currentCustomerId]
+            ),
+            tx.query(`SELECT * FROM public.device_profiles WHERE id = $1`, [device.profileId]),
+            tx.query(
+              `SELECT * FROM public.activation_sms_logs WHERE device_id = $1 ORDER BY step_order ASC`,
+              [device.id]
+            ),
+            tx.query(
+              `SELECT * FROM public.subscription_history WHERE device_id = $1 ORDER BY created_at DESC`,
+              [device.id]
+            ),
+            tx.query(
+              `SELECT * FROM public.device_ownership_history WHERE device_id = $1 ORDER BY reassigned_at DESC`,
+              [device.id]
+            ),
+            tx.query(
+              `SELECT * FROM public.device_commands WHERE device_id = $1 ORDER BY created_at DESC LIMIT 30`,
+              [device.id]
+            )
+          ]);
 
         const sub = subRes.rows[0] ? this._mapSubscriptionRow(subRes.rows[0]) : null;
+        const prof = profRes.rows[0] ? this._mapProfileRow(profRes.rows[0]) : null;
         const accessible =
           sub !== null &&
           sub.status === "ACTIVE" &&
@@ -1895,14 +3270,25 @@ export class VeloTrackEngine {
               }
             : device;
 
+        const allowedCmdTypes =
+          Array.isArray(prof?.supportedCommands) && prof.supportedCommands.length > 0
+            ? prof.supportedCommands
+            : PROTOCOL_SUPPORTED_COMMANDS[prof?.traccarProtocol ?? "gt06"] ?? [];
+        const supportedCommands = allowedCmdTypes
+          .map((t) => OFFICIAL_TRACCAR_COMMANDS[t])
+          .filter(Boolean)
+          .filter((c) => (actorClaims.role === "ADMIN" ? true : c.customerPermitted));
+
         bundles.push({
           device: safeDevice,
           subscription: sub,
           customer: custRes.rows[0] ? this._mapUserRow(custRes.rows[0]) : null,
-          profile: profRes.rows[0] ? this._mapProfileRow(profRes.rows[0]) : null,
+          profile: prof,
           smsLogs: smsRes.rows.map((r) => this._mapSmsLogRow(r)),
           subscriptionHistory: subHistRes.rows.map((r) => this._mapSubHistoryRow(r)),
-          ownershipHistory: ownHistRes.rows.map((r) => this._mapOwnershipHistoryRow(r))
+          ownershipHistory: ownHistRes.rows.map((r) => this._mapOwnershipHistoryRow(r)),
+          commandHistory: cmdRes.rows.map((r) => this._mapCommandRow(r)),
+          supportedCommands
         });
       }
 
@@ -1910,13 +3296,32 @@ export class VeloTrackEngine {
     });
   }
 
+  async getAuthorizedDeviceDetails(actorClaims, deviceId, nowMs = Date.now()) {
+    const list = await this.listAuthorizedDevices(actorClaims, nowMs);
+    const found = list.find((b) => b.device.id === deviceId);
+    if (found) return found;
+
+    const existsInSystem = await this.db.runSystemTransaction(async (tx) => {
+      const r = await tx.query(`SELECT id FROM public.devices WHERE id = $1`, [deviceId]);
+      return r.rows.length > 0;
+    });
+    if (existsInSystem) {
+      throw new Error("FORBIDDEN_TENANT_ISOLATION");
+    }
+    throw new Error("DEVICE_NOT_FOUND");
+  }
+
+  /**
+   * Fetches route history from Traccar.
+   * Administrators retain access to expired/suspended vehicles so they can inspect devices;
+   * customers are blocked when their subscription is expired or suspended.
+   */
   async getAuthorizedRouteHistory(actorClaims, { deviceId, fromIso, toIso, nowMs = Date.now() }) {
     const accessible = await this.enforceSubscriptionExpiry(deviceId, nowMs);
     const device = await this.db.runTenantTransaction(actorClaims, async (tx) => {
       await this._assertActiveAndPasswordUpdated(tx, actorClaims);
       const res = await tx.query(`SELECT * FROM public.devices WHERE id = $1`, [deviceId]);
       if (res.rows.length === 0) {
-        // Check if device exists at all to return 403 vs 404
         return null;
       }
       return this._mapDeviceRow(res.rows[0]);
@@ -1933,7 +3338,7 @@ export class VeloTrackEngine {
       throw new Error("DEVICE_NOT_FOUND");
     }
 
-    if (!accessible) {
+    if (!accessible && actorClaims.role !== "ADMIN") {
       throw new Error("SUBSCRIPTION_EXPIRED");
     }
     return this.traccarClient.fetchRouteHistory(device.traccarDeviceId, fromIso, toIso);
@@ -1943,17 +3348,47 @@ export class VeloTrackEngine {
     return {
       id: row.id,
       username: row.username ?? null,
-      email: row.email,
-      phone: row.phone,
+      email: row.email ?? null,
+      phone: row.phone ?? "",
       fullName: row.full_name,
       role: row.role,
       mustChangePassword: Boolean(row.must_change_password),
       isActive: Boolean(row.is_active),
-      createdAtMs: row.created_at ? new Date(row.created_at).getTime() : 0
+      deletedAtMs: row.deleted_at ? new Date(row.deleted_at).getTime() : null,
+      createdAtMs: row.created_at ? new Date(row.created_at).getTime() : 0,
+      vehicleCount: row.vehicle_count !== undefined ? Number(row.vehicle_count) : undefined,
+      subscriptionCount:
+        row.subscription_count !== undefined ? Number(row.subscription_count) : undefined,
+      activeSubscriptionCount:
+        row.active_subscription_count !== undefined
+          ? Number(row.active_subscription_count)
+          : undefined,
+      pendingSubscriptionCount:
+        row.pending_subscription_count !== undefined
+          ? Number(row.pending_subscription_count)
+          : undefined,
+      expiredSubscriptionCount:
+        row.expired_subscription_count !== undefined
+          ? Number(row.expired_subscription_count)
+          : undefined,
+      suspendedSubscriptionCount:
+        row.suspended_subscription_count !== undefined
+          ? Number(row.suspended_subscription_count)
+          : undefined
     };
   }
 
   _mapProfileRow(row) {
+    let supportedCommands = ["positionSingle", "engineStop", "engineResume", "custom"];
+    if (Array.isArray(row.supported_commands)) {
+      supportedCommands = row.supported_commands;
+    } else if (typeof row.supported_commands === "string") {
+      try {
+        supportedCommands = JSON.parse(row.supported_commands);
+      } catch {
+        // use default
+      }
+    }
     return {
       id: row.id,
       manufacturer: row.manufacturer,
@@ -1971,6 +3406,7 @@ export class VeloTrackEngine {
       gprsonCommandTemplate: row.gprson_command_template ?? null,
       optionalTimerCommandTemplate: row.optional_timer_command_template ?? null,
       expectedReplyPattern: row.expected_reply_pattern ?? null,
+      supportedCommands,
       isVerified: Boolean(row.is_verified),
       createdAtMs: row.created_at ? new Date(row.created_at).getTime() : 0
     };
@@ -1980,11 +3416,15 @@ export class VeloTrackEngine {
     return {
       id: row.id,
       imei: row.imei,
+      serialNumber: row.serial_number ?? null,
       traccarDeviceId: Number(row.traccar_device_id),
       profileId: row.profile_id,
       currentCustomerId: row.current_customer_id,
       vehicleName: row.vehicle_name,
+      vehicleType: row.vehicle_type ?? "CAR",
+      vehicleIcon: row.vehicle_icon ?? "car",
       plateNumber: row.plate_number,
+      simNumber: row.sim_e164_number,
       simLocalNumber: row.sim_local_number,
       simE164Number: row.sim_e164_number,
       activationStatus: row.activation_status,
@@ -2008,7 +3448,8 @@ export class VeloTrackEngine {
         ? new Date(row.first_connected_at).getTime()
         : null,
       lastSeenAtMs: row.last_seen_at ? new Date(row.last_seen_at).getTime() : null,
-      createdAtMs: row.created_at ? new Date(row.created_at).getTime() : 0
+      createdAtMs: row.created_at ? new Date(row.created_at).getTime() : 0,
+      updatedAtMs: row.updated_at ? new Date(row.updated_at).getTime() : 0
     };
   }
 
@@ -2033,6 +3474,7 @@ export class VeloTrackEngine {
       stepOrder: Number(row.step_order),
       commandKey: row.command_key,
       commandText: row.command_text,
+      idempotencyKey: row.idempotency_key ?? null,
       gatewayMessageId: row.gateway_message_id ?? null,
       status: row.status,
       deviceReply: row.device_reply ?? null,
@@ -2066,12 +3508,37 @@ export class VeloTrackEngine {
       reassignedAtMs: row.reassigned_at ? new Date(row.reassigned_at).getTime() : 0
     };
   }
+
+  _mapCommandRow(row) {
+    let params = {};
+    if (row.parameters && typeof row.parameters === "object") {
+      params = row.parameters;
+    } else if (typeof row.parameters === "string") {
+      try {
+        params = JSON.parse(row.parameters);
+      } catch {
+        params = {};
+      }
+    }
+    return {
+      id: row.id,
+      deviceId: row.device_id,
+      traccarDeviceId: Number(row.traccar_device_id),
+      actorUserId: row.actor_user_id,
+      actorRole: row.actor_role,
+      commandType: row.command_type,
+      parameters: params,
+      confirmedSensitive: Boolean(row.confirmed_sensitive),
+      status: row.status,
+      failureReason: row.failure_reason ?? null,
+      createdAtMs: row.created_at ? new Date(row.created_at).getTime() : 0
+    };
+  }
 }
 
 /**
  * Authenticated `/ws/live` WebSocket Hub for Android & Web Clients
- * Enforces JWT verification, `must_change_password === false`, customer tenant isolation,
- * inline subscription expiration checks, and initial state reconciliation on connect.
+ * Supports Authorization: Bearer <jwt>, single-use `?ticket=<ticket>`, and `?token=<jwt>` fallback.
  */
 export class LiveWebSocketHub {
   constructor({ httpServer, engine, authService }) {
@@ -2088,10 +3555,16 @@ export class LiveWebSocketHub {
           return;
         }
         const authHeader = req.headers.authorization ?? "";
-        const bearerToken = authHeader.startsWith("Bearer ")
-          ? authHeader.slice("Bearer ".length).trim()
-          : url.searchParams.get("token");
-        const claims = this.authService.verifyToken(bearerToken);
+        const ticket = url.searchParams.get("ticket");
+        let claims;
+        if (ticket) {
+          claims = this.authService.consumeWebSocketTicket(ticket);
+        } else {
+          const bearerToken = authHeader.startsWith("Bearer ")
+            ? authHeader.slice("Bearer ".length).trim()
+            : url.searchParams.get("token");
+          claims = this.authService.verifyToken(bearerToken);
+        }
 
         this.wss.handleUpgrade(req, socket, head, (ws) => {
           this._handleConnection(ws, claims);
@@ -2110,7 +3583,6 @@ export class LiveWebSocketHub {
   async _handleConnection(ws, claims) {
     const clientEntry = { ws, claims };
     try {
-      // Reconcile state immediately upon connection and verify must_change_password === false
       const authorizedDevices = await this.engine.listAuthorizedDevices(claims);
       this.clients.add(clientEntry);
 

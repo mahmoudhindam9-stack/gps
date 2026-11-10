@@ -55,6 +55,8 @@ import com.example.data.model.ActivationStatus
 import com.example.data.model.DeviceAggregate
 import com.example.data.model.PlanDuration
 import com.example.data.model.SimAndImeiValidator
+import com.example.data.model.VehicleIcon
+import com.example.data.model.VehicleType
 import com.example.ui.ActivationFormState
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.StatusExpiredCrimson
@@ -70,6 +72,7 @@ fun AdminDeviceActivationScreen(
     allDevices: List<DeviceAggregate>,
     onUpdateForm: ((ActivationFormState) -> ActivationFormState) -> Unit,
     onSubmitActivation: () -> Unit,
+    onSendActivationSms: (String) -> Unit = {},
     onAdminOverride: (String, String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -184,24 +187,39 @@ fun AdminDeviceActivationScreen(
                 modifier = Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                OutlinedTextField(
-                    value = formState.imei,
-                    onValueChange = { raw ->
-                        onUpdateForm { it.copy(imei = raw.filter { ch -> ch.isDigit() }.take(15)) }
-                    },
-                    label = { Text("IMEI") },
-                    trailingIcon = {
-                        StatusPill(
-                            text = if (imeiValid) "OK" else "${formState.imei.length}/15",
-                            color = if (imeiValid) StatusMovingEmerald else StatusOfflineSlate
-                        )
-                    },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("activation_imei_input")
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = formState.imei,
+                        onValueChange = { raw ->
+                            onUpdateForm { it.copy(imei = raw.filter { ch -> ch.isDigit() }.take(15)) }
+                        },
+                        label = { Text("IMEI") },
+                        trailingIcon = {
+                            StatusPill(
+                                text = if (imeiValid) "OK" else "${formState.imei.length}/15",
+                                color = if (imeiValid) StatusMovingEmerald else StatusOfflineSlate
+                            )
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(0.62f)
+                            .testTag("activation_imei_input")
+                    )
+
+                    OutlinedTextField(
+                        value = formState.serialNumber,
+                        onValueChange = { s -> onUpdateForm { it.copy(serialNumber = s) } },
+                        label = { Text("Serial") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(0.38f)
+                            .testTag("activation_serial_input")
+                    )
+                }
 
                 OutlinedTextField(
                     value = formState.simLocalWithoutPlus20,
@@ -246,6 +264,38 @@ fun AdminDeviceActivationScreen(
                             .weight(0.4f)
                             .testTag("activation_plate_input")
                     )
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    VehicleType.entries.forEach { vType ->
+                        FilterChip(
+                            selected = formState.vehicleType == vType,
+                            onClick = { onUpdateForm { it.copy(vehicleType = vType) } },
+                            label = { Text(vType.shortLabel) },
+                            modifier = Modifier.testTag("vehicle_type_chip_${vType.name.lowercase()}")
+                        )
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    VehicleIcon.entries.forEach { vIcon ->
+                        FilterChip(
+                            selected = formState.vehicleIcon == vIcon,
+                            onClick = { onUpdateForm { it.copy(vehicleIcon = vIcon) } },
+                            label = { Text(vIcon.shortLabel) },
+                            modifier = Modifier.testTag("vehicle_icon_chip_${vIcon.key}")
+                        )
+                    }
                 }
 
                 if (customerList.isNotEmpty()) {
@@ -314,6 +364,7 @@ fun AdminDeviceActivationScreen(
         if (trackedDevice != null) {
             ActivationStateMachineCard(
                 aggregate = trackedDevice,
+                onSendActivationSms = { onSendActivationSms(trackedDevice.device.id) },
                 onOpenAdminOverrideDialog = {
                     showOverrideDialogForDeviceId = trackedDevice.device.id
                 }
@@ -360,6 +411,7 @@ fun AdminDeviceActivationScreen(
 @Composable
 private fun ActivationStateMachineCard(
     aggregate: DeviceAggregate,
+    onSendActivationSms: () -> Unit,
     onOpenAdminOverrideDialog: () -> Unit
 ) {
     val dev = aggregate.device
@@ -492,16 +544,32 @@ private fun ActivationStateMachineCard(
             }
 
             if (currentStatus != ActivationStatus.ACTIVATED) {
-                OutlinedButton(
-                    onClick = onOpenAdminOverrideDialog,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 40.dp)
-                        .testTag("open_admin_override_button")
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Override", fontSize = 11.sp)
+                    OutlinedButton(
+                        onClick = onSendActivationSms,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 40.dp)
+                            .testTag("send_activation_sms_button")
+                    ) {
+                        Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Send SMS", fontSize = 11.sp)
+                    }
+                    OutlinedButton(
+                        onClick = onOpenAdminOverrideDialog,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 40.dp)
+                            .testTag("open_admin_override_button")
+                    ) {
+                        Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Override", fontSize = 11.sp)
+                    }
                 }
             }
         }

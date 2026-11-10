@@ -4,3 +4,35 @@
 @media(max-width:1200px){.metrics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.profiles-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.dashboard-grid{grid-template-columns:minmax(0,1.4fr) minmax(250px,.8fr)}}
 @media(max-width:900px){.sidebar{transform:translateX(105%);transition:transform .25s;left:auto;right:0;width:280px;box-shadow:-25px 0 60px #0005}.sidebar.sidebar-open{transform:translateX(0)}.sidebar-close,.menu-toggle{display:inline-grid}.mobile-shade{display:block;position:fixed;inset:0;background:#030810a8;border:0;z-index:25}.main-area{margin-right:0}.topbar{padding:0 18px}.content-area{padding:22px 18px 40px}.dashboard-grid{grid-template-columns:1fr}.live-layout{grid-template-columns:1fr}.live-list{max-height:none}.live-map .map-wrap,.live-map .map-empty{height:440px;min-height:0}.system-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.topbar{height:62px;padding:0 12px}.content-area{padding:18px 12px 32px}.page-title{align-items:flex-start;gap:12px}.page-title h1{font-size:21px}.page-title .primary-btn,.page-title .secondary-btn{padding:9px 10px;font-size:10px}.breadcrumb span,.breadcrumb b{display:none}.topbar-start,.topbar-actions{gap:7px}.connection-tag{padding:6px 8px;font-size:9px}.metrics-grid,.compact-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.metric-card{min-height:130px;padding:14px}.metric-value{font-size:23px;top:17px;left:13px}.welcome-strip{padding:18px}.welcome-art{display:none}.profiles-grid{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.grid-full{grid-column:auto}.detail-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-actions .secondary-btn{flex:1}.auth-card{padding:27px 22px}.report-filters{display:grid;grid-template-columns:1fr 1fr}.report-filters label{min-width:0}.report-filters label:first-child{grid-column:1/-1}.report-filters .primary-btn{grid-column:1/-1}.system-foot>div{display:grid;gap:4px}.table-panel .panel-head{padding:14px}.map-preview .map-wrap,.map-preview .map-empty{height:230px}}
+
+.page-title-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.metrics-6{grid-template-columns:repeat(6,minmax(0,1fr))}
+.customer-summary-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:18px;padding:16px 22px;margin-bottom:18px}
+.customer-meta-item{display:grid;gap:4px}
+.customer-meta-item span{font-size:10px;color:#7f90aa}
+.customer-meta-item b{font-size:13px;color:#e8edf6}
+.icon-picker-block{display:grid;gap:8px}
+.icon-picker-label{font-size:11px;color:#a8b7cc;font-weight:600}
+.icon-picker-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.icon-picker-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;border:1px solid #2b3c56;background:#0d1728;color:#b8c7dc;font-size:11px;text-align:right;transition:.16s}
+.icon-picker-item.selected{border-color:#d8b46c;background:#1f2b3f;color:#f3d493;box-shadow:0 0 0 2px #d8b46c22}
+.input-with-action{display:flex;gap:8px;align-items:center}
+.input-with-action input{flex:1}
+.scan-btn{height:42px;padding:0 12px;white-space:nowrap}
+.scanner-viewport{position:relative;border-radius:12px;overflow:hidden;background:#070d18;border:1px solid #2d3f5b;height:230px;display:grid;place-items:center}
+.scanner-video{width:100%;height:100%;object-fit:cover}
+.scanner-frame{position:absolute;width:72%;height:54%;border:2px dashed #d8b46c;border-radius:12px;pointer-events:none;box-shadow:0 0 0 999px rgba(5,10,19,.42)}
+.scanner-badge{position:absolute;bottom:10px;right:12px;background:#0e182ad9;color:#e7c77f;padding:5px 10px;border-radius:18px;font-size:10px;display:inline-flex;align-items:center;gap:6px}
+.command-controls{display:grid;gap:10px;margin:10px 0 16px}
+.command-buttons-grid{display:flex;flex-wrap:wrap;gap:8px}
+.cmd-danger{border-color:#693545;color:#ffadb8}
+.cmd-danger:hover{background:#4b2431;color:#fff}
+.cmd-param-input{height:38px;border:1px solid #30415b;background:#0d1728;color:#edf2fa;border-radius:9px;padding:0 12px;font-size:11px;width:100%}
+.map-popup-card{display:grid;gap:5px;min-width:170px;font-family:"Cairo",sans-serif}
+.map-popup-card b{font-size:12px;color:#111827}
+.map-popup-card small{font-size:10px;color:#4b5563;display:block}
+.map-popup-meta{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#374151}
+.map-popup-btn{margin-top:5px;border:0;border-radius:7px;padding:6px 10px;background:#172033;color:#e7c77f;font-size:10px;font-weight:700;cursor:pointer}
+.velotrack-marker-wrapper{background:transparent!important;border:0!important}
+@media(max-width:1100px){.metrics-6{grid-template-columns:repeat(3,minmax(0,1fr))}.icon-picker-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.metrics-6{grid-template-columns:repeat(2,minmax(0,1fr))}}

@@ -23,10 +23,13 @@ class ExampleRobolectricTest {
         val baseDevice = DeviceEntity(
             id = "dev-sms-1",
             imei = "358739051122332",
+            serialNumber = "SN-VAN-02",
             traccarDeviceId = 19L,
             profileId = "profile-gt06n",
             currentCustomerId = "cust-1",
             vehicleName = "Delivery Van 02",
+            vehicleType = "VAN",
+            vehicleIcon = "van",
             plateNumber = "XYZ-987",
             simLocalNumber = "01112345678",
             simE164Number = "+201112345678",
@@ -102,7 +105,7 @@ class ExampleRobolectricTest {
         )
         assertEquals(ActivationStatus.FAILED.name, timedOutDevice.activationStatus)
 
-        // Subscription expiration must block live & historical access once serverNowMillis >= expiresAt
+        // Subscription expiration and suspension must block live & historical access
         val startMillis = 1_700_000_000_000L
         val expiresMillis = PlanDuration.MONTH_1.computeExpiryMillis(startMillis)!!
         val activeSubscription = SubscriptionEntity(
@@ -128,5 +131,11 @@ class ExampleRobolectricTest {
 
         assertTrue(aggregate.isSubscriptionAccessible(serverNowMillis = expiresMillis - 1_000L))
         assertFalse(aggregate.isSubscriptionAccessible(serverNowMillis = expiresMillis))
+
+        val suspendedAggregate = aggregate.copy(
+            subscription = activeSubscription.copy(status = SubscriptionStatus.SUSPENDED.name)
+        )
+        assertFalse(suspendedAggregate.isSubscriptionAccessible(serverNowMillis = expiresMillis - 1_000L))
+        assertEquals("SUSPENDED", suspendedAggregate.compactSubscriptionBadge(expiresMillis - 1_000L))
     }
 }

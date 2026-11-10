@@ -12,6 +12,9 @@ interface VeloTrackDao {
     @Query("SELECT * FROM users_profile ORDER BY role ASC, fullName ASC")
     fun observeAllUsers(): Flow<List<UserProfileEntity>>
 
+    @Query("SELECT * FROM users_profile ORDER BY role ASC, fullName ASC")
+    suspend fun getAllUsersOnce(): List<UserProfileEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertUsers(users: List<UserProfileEntity>)
 
@@ -20,6 +23,9 @@ interface VeloTrackDao {
 
     @Query("SELECT * FROM device_profiles ORDER BY manufacturer ASC, model ASC, firmwareVersion ASC")
     fun observeDeviceProfiles(): Flow<List<DeviceProfileEntity>>
+
+    @Query("SELECT * FROM device_profiles ORDER BY manufacturer ASC, model ASC, firmwareVersion ASC")
+    suspend fun getAllProfilesOnce(): List<DeviceProfileEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDeviceProfiles(profiles: List<DeviceProfileEntity>)
@@ -30,6 +36,9 @@ interface VeloTrackDao {
     @Query("SELECT * FROM devices ORDER BY createdAt DESC")
     fun observeAllDevices(): Flow<List<DeviceEntity>>
 
+    @Query("SELECT * FROM devices ORDER BY createdAt DESC")
+    suspend fun getAllDevicesOnce(): List<DeviceEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDevices(devices: List<DeviceEntity>)
 
@@ -39,6 +48,9 @@ interface VeloTrackDao {
     @Query("SELECT * FROM activation_sms_logs ORDER BY stepOrder ASC")
     fun observeAllSmsLogs(): Flow<List<ActivationSmsLogEntity>>
 
+    @Query("SELECT * FROM activation_sms_logs ORDER BY stepOrder ASC")
+    suspend fun getAllSmsLogsOnce(): List<ActivationSmsLogEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSmsLogs(logs: List<ActivationSmsLogEntity>)
 
@@ -47,6 +59,9 @@ interface VeloTrackDao {
 
     @Query("SELECT * FROM subscriptions")
     fun observeAllSubscriptions(): Flow<List<SubscriptionEntity>>
+
+    @Query("SELECT * FROM subscriptions")
+    suspend fun getAllSubscriptionsOnce(): List<SubscriptionEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSubscriptions(subscriptions: List<SubscriptionEntity>)
@@ -72,6 +87,15 @@ interface VeloTrackDao {
     @Query("DELETE FROM device_ownership_history")
     suspend fun clearOwnershipHistory()
 
+    @Query("SELECT * FROM device_commands ORDER BY sentAt DESC")
+    fun observeAllDeviceCommands(): Flow<List<DeviceCommandEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDeviceCommands(commands: List<DeviceCommandEntity>)
+
+    @Query("DELETE FROM device_commands")
+    suspend fun clearDeviceCommands()
+
     @Query("SELECT * FROM cached_waypoints WHERE deviceId = :deviceId ORDER BY recordedAt ASC")
     suspend fun getWaypointsForDevice(deviceId: String): List<CachedWaypointEntity>
 
@@ -92,11 +116,13 @@ interface VeloTrackDao {
         subscriptions: List<SubscriptionEntity>,
         smsLogs: List<ActivationSmsLogEntity>,
         subHistory: List<SubscriptionHistoryEntity>,
-        ownHistory: List<DeviceOwnershipHistoryEntity>
+        ownHistory: List<DeviceOwnershipHistoryEntity>,
+        commands: List<DeviceCommandEntity> = emptyList()
     ) {
         clearSmsLogs()
         clearSubscriptionHistory()
         clearOwnershipHistory()
+        clearDeviceCommands()
         clearSubscriptions()
         clearDevices()
         if (users.isNotEmpty()) {
@@ -112,6 +138,9 @@ interface VeloTrackDao {
         insertSmsLogs(smsLogs)
         insertSubscriptionHistoryList(subHistory)
         insertOwnershipHistoryList(ownHistory)
+        if (commands.isNotEmpty()) {
+            insertDeviceCommands(commands)
+        }
     }
 
     @Query("DELETE FROM activation_sms_logs WHERE gatewayMessageId LIKE 'GSM-EG-%'")
@@ -132,6 +161,7 @@ interface VeloTrackDao {
         clearSmsLogs()
         clearSubscriptionHistory()
         clearOwnershipHistory()
+        clearDeviceCommands()
         clearSubscriptions()
         clearDevices()
         clearDeviceProfiles()

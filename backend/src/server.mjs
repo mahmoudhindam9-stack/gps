@@ -1,13 +1,15 @@
 import http from "node:http";
 import crypto from "node:crypto";
-import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  DEFAULT_GITHUB_REPO,
   LiveWebSocketHub,
   SupabaseAuthService,
   SupabaseDatabaseAdapter,
   TraccarBridgeClient,
-  VeloTrackEngine
+  VELOTRACK_APP_VERSION,
+  VeloTrackEngine,
+  checkGitHubReleaseStatus
 } from "./core.mjs";
 
 function readJsonBody(req) {
@@ -31,13 +33,43 @@ function readJsonBody(req) {
   });
 }
 
-function sendJson(res, status, payload) {
+function resolveAllowedOrigin(req, allowedOriginsConfig = process.env.CORS_ALLOWED_ORIGINS ?? "") {
+  const requestOrigin = String(req?.headers?.origin ?? "").trim();
+  const configured = String(allowedOriginsConfig ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (configured.includes("*")) {
+    return requestOrigin || "*";
+  }
+
+  const defaultDevOrigins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000"
+  ];
+  const allowSet = new Set([...defaultDevOrigins, ...configured]);
+
+  if (!requestOrigin) {
+    return configured[0] ?? defaultDevOrigins[0];
+  }
+  if (allowSet.has(requestOrigin)) {
+    return requestOrigin;
+  }
+  return configured[0] ?? defaultDevOrigins[0];
+}
+
+function sendJson(res, status, payload, req = null, allowedOriginsConfig = "") {
+  const allowOrigin = resolveAllowedOrigin(req, allowedOriginsConfig);
   res.writeHead(status, {
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": allowOrigin,
+    Vary: "Origin",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Sms-Webhook-Secret",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS"
   });
   res.end(JSON.stringify(payload));
 }
@@ -47,8 +79,14 @@ export function createVeloTrackRequestListener({
   authService,
   traccarClient,
   smsWebhookSecret = process.env.SMS_WEBHOOK_SECRET ?? "",
-  smsGatewayConfigured = false
+  smsGatewayConfigured = false,
+  corsAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS ?? "",
+  githubRepo = process.env.VELOTRACK_GITHUB_REPO ?? DEFAULT_GITHUB_REPO,
+  appVersion = process.env.VELOTRACK_APP_VERSION ?? VELOTRACK_APP_VERSION,
+  releaseFetchImpl = globalThis.fetch
 }) {
+  let autoUpdateEnabled = process.env.VELOTRACK_AUTO_UPDATE_ENABLED !== "false";
+
   function authenticateRequest(req) {
     const header = req.headers.authorization ?? "";
     if (!header.startsWith("Bearer ")) {
@@ -71,7 +109,7 @@ export function createVeloTrackRequestListener({
 
   return async (req, res) => {
     if (req.method === "OPTIONS") {
-      return sendJson(res, 200, { ok: true });
+      return sendJson(res, 200, { ok: true }, req, corsAllowedOrigins);
     }
     try {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -89,43 +127,85 @@ export function createVeloTrackRequestListener({
           databaseError = healthError.message ?? "DATABASE_UNAVAILABLE";
         }
         const healthy = databaseConnected;
-        return sendJson(res, healthy ? 200 : 503, {
-          status: healthy ? "OK" : "DEGRADED",
-          supabaseConnected: databaseConnected,
-          databaseError,
-          traccarConnected: Boolean(traccarClient.sessionCookie),
-          traccarWsConnected: Boolean(traccarClient.wsConnected),
-          traccarLastSyncAtMs: traccarClient.lastSyncAtMs,
-          smsGatewayConfigured: Boolean(smsGatewayConfigured)
+        return sendJson(
+          res,
+          healthy ? 200 : 503,
+          {
+            status: healthy ? "OK" : "DEGRADED",
+            version: appVersion,
+            repository: githubRepo,
+            supabaseConnected: databaseConnected,
+            databaseError,
+            traccarConnected: Boolean(traccarClient.sessionCookie),
+            traccarWsConnected: Boolean(traccarClient.wsConnected),
+            traccarLastSyncAtMs: traccarClient.lastSyncAtMs,
+            smsGatewayConfigured: Boolean(smsGatewayConfigured)
+          },
+          req,
+          corsAllowedOrigins
+        );
+      }
+
+      if (
+        (req.method === "GET" || req.method === "POST") &&
+        (pathname === "/api/v1/system/version" || pathname === "/api/v1/system/check-update")
+      ) {
+        if (req.method === "POST") {
+          const body = await readJsonBody(req);
+          if (typeof body.autoUpdateEnabled === "boolean") {
+            autoUpdateEnabled = body.autoUpdateEnabled;
+          }
+        }
+        const releaseInfo = await checkGitHubReleaseStatus({
+          repo: githubRepo,
+          currentVersion: appVersion,
+          autoUpdateEnabled,
+          fetchImpl: releaseFetchImpl
         });
+        return sendJson(res, 200, releaseInfo, req, corsAllowedOrigins);
       }
 
       if (req.method === "POST" && pathname === "/api/v1/auth/login") {
         const body = await readJsonBody(req);
-        const identifier = body.identifier ?? body.username ?? body.email ?? "";
+        const identifier = body.identifier ?? body.username ?? body.phone ?? body.email ?? "";
         const session = await engine.login(identifier, body.password);
-        return sendJson(res, 200, session);
+        return sendJson(res, 200, session, req, corsAllowedOrigins);
       }
 
       if (req.method === "POST" && pathname === "/api/v1/webhooks/sms/delivery") {
         verifyWebhookSecret(req);
         const body = await readJsonBody(req);
         const updated = await engine.handleSmsDeliveryWebhook(body);
-        return sendJson(res, 200, updated);
+        return sendJson(res, 200, updated, req, corsAllowedOrigins);
       }
 
       if (req.method === "POST" && pathname === "/api/v1/webhooks/sms/inbound") {
         verifyWebhookSecret(req);
         const body = await readJsonBody(req);
         const updated = await engine.handleInboundSmsReply(body);
-        return sendJson(res, 200, updated);
+        return sendJson(res, 200, updated, req, corsAllowedOrigins);
       }
 
       const claims = authenticateRequest(req);
 
       if (req.method === "GET" && pathname === "/api/v1/auth/me") {
         const user = await engine.getAuthenticatedUserProfile(claims);
-        return sendJson(res, 200, user);
+        return sendJson(res, 200, user, req, corsAllowedOrigins);
+      }
+
+      if (req.method === "POST" && pathname === "/api/v1/auth/ws-ticket") {
+        const issued = authService.issueWebSocketTicket(claims);
+        return sendJson(
+          res,
+          200,
+          {
+            ticket: typeof issued === "string" ? issued : issued.ticket,
+            expiresAtMs: issued.expiresAtMs,
+            expiresInSeconds: 45
+          },
+          req,
+          corsAllowedOrigins
+        );
       }
 
       if (req.method === "POST" && pathname === "/api/v1/auth/change-password") {
@@ -134,29 +214,62 @@ export function createVeloTrackRequestListener({
           currentPassword: body.currentPassword,
           newPassword: body.newPassword
         });
-        return sendJson(res, 200, updatedSession);
+        return sendJson(res, 200, updatedSession, req, corsAllowedOrigins);
       }
 
       if (req.method === "GET" && pathname === "/api/v1/users") {
         const list = await engine.listUsers(claims);
-        return sendJson(res, 200, list);
+        return sendJson(res, 200, list, req, corsAllowedOrigins);
+      }
+
+      if (req.method === "POST" && pathname === "/api/v1/users") {
+        const body = await readJsonBody(req);
+        const created = await engine.createUserAccount(claims, body);
+        return sendJson(res, 201, created, req, corsAllowedOrigins);
       }
 
       if (req.method === "POST" && pathname === "/api/v1/admin/customers") {
         const body = await readJsonBody(req);
         const created = await engine.createCustomerAccount(claims, body);
-        return sendJson(res, 201, created);
+        return sendJson(res, 201, created, req, corsAllowedOrigins);
+      }
+
+      const userStatusMatch = /^\/api\/v1\/users\/([^/]+)\/status$/.exec(pathname);
+      if (req.method === "POST" && userStatusMatch) {
+        const body = await readJsonBody(req);
+        const updated = await engine.setUserActiveStatus(claims, userStatusMatch[1], {
+          isActive: body.isActive
+        });
+        return sendJson(res, 200, updated, req, corsAllowedOrigins);
+      }
+
+      const userMatch = /^\/api\/v1\/(?:users|customers)\/([^/]+)$/.exec(pathname);
+      if (userMatch) {
+        const targetUserId = userMatch[1];
+        if (req.method === "GET") {
+          const details = await engine.getCustomerDetails(claims, targetUserId);
+          return sendJson(res, 200, details, req, corsAllowedOrigins);
+        }
+        if (req.method === "PATCH" || req.method === "PUT") {
+          const body = await readJsonBody(req);
+          const updated = await engine.updateUserAccount(claims, targetUserId, body);
+          return sendJson(res, 200, updated, req, corsAllowedOrigins);
+        }
+        if (req.method === "DELETE") {
+          const deleted = await engine.deleteUserAccount(claims, targetUserId);
+          return sendJson(res, 200, deleted, req, corsAllowedOrigins);
+        }
       }
 
       if (req.method === "GET" && pathname === "/api/v1/profiles") {
         const list = await engine.listDeviceProfiles(claims);
-        return sendJson(res, 200, list);
+        return sendJson(res, 200, list, req, corsAllowedOrigins);
       }
 
       if (req.method === "POST" && pathname === "/api/v1/profiles") {
         const body = await readJsonBody(req);
         const created = await engine.registerDeviceProfile(claims, body);
-        return sendJson(res, 201, created);
+        return sendJson(res, 201, created, req, corsAllowedOrigins);
       }
 
       const verifyProfileMatch = /^\/api\/v1\/admin\/profiles\/([^/]+)\/verify$/.exec(pathname);
@@ -165,18 +278,31 @@ export function createVeloTrackRequestListener({
           claims,
           verifyProfileMatch[1]
         );
-        return sendJson(res, 200, verified);
+        return sendJson(res, 200, verified, req, corsAllowedOrigins);
       }
 
       if (req.method === "GET" && pathname === "/api/v1/devices") {
         const devices = await engine.listAuthorizedDevices(claims);
-        return sendJson(res, 200, devices);
+        return sendJson(res, 200, devices, req, corsAllowedOrigins);
       }
 
       if (req.method === "POST" && pathname === "/api/v1/admin/devices/activate") {
         const body = await readJsonBody(req);
         const result = await engine.provisionAndActivateDevice(claims, body);
-        return sendJson(res, 201, result);
+        return sendJson(res, 201, result, req, corsAllowedOrigins);
+      }
+
+      const sendSmsMatch = /^\/api\/v1\/admin\/devices\/([^/]+)\/send-activation-sms$/.exec(
+        pathname
+      );
+      if (req.method === "POST" && sendSmsMatch) {
+        const body = await readJsonBody(req);
+        const result = await engine.sendDeviceActivationSms(claims, {
+          deviceId: sendSmsMatch[1],
+          idempotencyKey: body.idempotencyKey ?? null,
+          forceResend: Boolean(body.forceResend)
+        });
+        return sendJson(res, 200, result, req, corsAllowedOrigins);
       }
 
       const overrideMatch = /^\/api\/v1\/admin\/devices\/([^/]+)\/override-activate$/.exec(
@@ -188,7 +314,7 @@ export function createVeloTrackRequestListener({
           deviceId: overrideMatch[1],
           auditReason: body.auditReason
         });
-        return sendJson(res, 200, result);
+        return sendJson(res, 200, result, req, corsAllowedOrigins);
       }
 
       const reassignMatch = /^\/api\/v1\/admin\/devices\/([^/]+)\/reassign$/.exec(pathname);
@@ -199,7 +325,7 @@ export function createVeloTrackRequestListener({
           newCustomerId: body.newCustomerId,
           reason: body.reason
         });
-        return sendJson(res, 200, result);
+        return sendJson(res, 200, result, req, corsAllowedOrigins);
       }
 
       const renewMatch = /^\/api\/v1\/admin\/devices\/([^/]+)\/renew$/.exec(pathname);
@@ -209,7 +335,27 @@ export function createVeloTrackRequestListener({
           deviceId: renewMatch[1],
           planDuration: body.planDuration
         });
-        return sendJson(res, 200, result);
+        return sendJson(res, 200, result, req, corsAllowedOrigins);
+      }
+
+      const suspendMatch = /^\/api\/v1\/admin\/devices\/([^/]+)\/suspend$/.exec(pathname);
+      if (req.method === "POST" && suspendMatch) {
+        const body = await readJsonBody(req);
+        const result = await engine.suspendSubscription(claims, {
+          deviceId: suspendMatch[1],
+          reason: body.reason
+        });
+        return sendJson(res, 200, result, req, corsAllowedOrigins);
+      }
+
+      const resumeMatch = /^\/api\/v1\/admin\/devices\/([^/]+)\/resume$/.exec(pathname);
+      if (req.method === "POST" && resumeMatch) {
+        const body = await readJsonBody(req);
+        const result = await engine.resumeSubscription(claims, {
+          deviceId: resumeMatch[1],
+          reason: body.reason
+        });
+        return sendJson(res, 200, result, req, corsAllowedOrigins);
       }
 
       const historyMatch = /^\/api\/v1\/devices\/([^/]+)\/history$/.exec(pathname);
@@ -222,7 +368,46 @@ export function createVeloTrackRequestListener({
           fromIso,
           toIso
         });
-        return sendJson(res, 200, history);
+        return sendJson(res, 200, history, req, corsAllowedOrigins);
+      }
+
+      const cmdTypesMatch = /^\/api\/v1\/devices\/([^/]+)\/commands\/types$/.exec(pathname);
+      if (req.method === "GET" && cmdTypesMatch) {
+        const types = await engine.getSupportedDeviceCommands(claims, cmdTypesMatch[1]);
+        return sendJson(res, 200, types, req, corsAllowedOrigins);
+      }
+
+      const cmdMatch = /^\/api\/v1\/devices\/([^/]+)\/commands$/.exec(pathname);
+      if (cmdMatch) {
+        const targetDeviceId = cmdMatch[1];
+        if (req.method === "GET") {
+          const history = await engine.listDeviceCommandHistory(claims, targetDeviceId);
+          return sendJson(res, 200, history, req, corsAllowedOrigins);
+        }
+        if (req.method === "POST") {
+          const body = await readJsonBody(req);
+          const sent = await engine.sendAuthorizedDeviceCommand(claims, {
+            deviceId: targetDeviceId,
+            type: body.type,
+            parameters: body.parameters ?? body.attributes ?? {},
+            confirmedSensitive: Boolean(body.confirmedSensitive || body.confirmed)
+          });
+          return sendJson(res, 200, sent, req, corsAllowedOrigins);
+        }
+      }
+
+      const deviceDetailMatch = /^\/api\/v1\/(?:admin\/)?devices\/([^/]+)$/.exec(pathname);
+      if (deviceDetailMatch) {
+        const targetDeviceId = deviceDetailMatch[1];
+        if (req.method === "GET") {
+          const details = await engine.getAuthorizedDeviceDetails(claims, targetDeviceId);
+          return sendJson(res, 200, details, req, corsAllowedOrigins);
+        }
+        if (req.method === "PATCH" || req.method === "PUT") {
+          const body = await readJsonBody(req);
+          const updated = await engine.updateVehicleMetadata(claims, targetDeviceId, body);
+          return sendJson(res, 200, updated, req, corsAllowedOrigins);
+        }
       }
 
       if (req.method === "POST" && pathname === "/api/v1/admin/traccar/sync") {
@@ -232,13 +417,19 @@ export function createVeloTrackRequestListener({
           traccarDevices: snapshot.devices,
           traccarPositions: snapshot.positions
         });
-        return sendJson(res, 200, {
-          updatedDeviceIds: updatedIds,
-          syncedAtMs: traccarClient.lastSyncAtMs
-        });
+        return sendJson(
+          res,
+          200,
+          {
+            updatedDeviceIds: updatedIds,
+            syncedAtMs: traccarClient.lastSyncAtMs
+          },
+          req,
+          corsAllowedOrigins
+        );
       }
 
-      sendJson(res, 404, { error: "NOT_FOUND" });
+      sendJson(res, 404, { error: "NOT_FOUND" }, req, corsAllowedOrigins);
     } catch (err) {
       const msg = err.message ?? "SERVER_ERROR";
       const status =
@@ -246,12 +437,14 @@ export function createVeloTrackRequestListener({
           ? 401
           : msg.startsWith("FORBIDDEN") ||
             msg === "SUBSCRIPTION_EXPIRED" ||
-            msg === "PASSWORD_CHANGE_REQUIRED"
+            msg === "SUBSCRIPTION_SUSPENDED" ||
+            msg === "PASSWORD_CHANGE_REQUIRED" ||
+            msg === "ACCOUNT_DEACTIVATED"
           ? 403
           : msg.endsWith("NOT_FOUND")
           ? 404
           : 400;
-      sendJson(res, status, { error: msg });
+      sendJson(res, status, { error: msg }, req, corsAllowedOrigins);
     }
   };
 }
@@ -358,20 +551,17 @@ export async function getOrCreateVeloTrackRuntime() {
       smsGateway
     });
 
-    const initialAdminEmail = process.env.VELOTRACK_INITIAL_ADMIN_EMAIL ?? "";
-    const initialAdminUsername = process.env.VELOTRACK_INITIAL_ADMIN_USERNAME ?? "";
-    const initialAdminPassword = process.env.VELOTRACK_INITIAL_ADMIN_PASSWORD ?? "";
-    const initialAdminPhone = process.env.VELOTRACK_INITIAL_ADMIN_PHONE ?? "";
+    const initialAdminEmail = process.env.VELOTRACK_INITIAL_ADMIN_EMAIL || "admin@velotrack.local";
+    const initialAdminUsername = process.env.VELOTRACK_INITIAL_ADMIN_USERNAME || "admin";
+    const initialAdminPassword = process.env.VELOTRACK_INITIAL_ADMIN_PASSWORD || "Admin@123456";
+    const initialAdminPhone = process.env.VELOTRACK_INITIAL_ADMIN_PHONE || "+201000000000";
 
-    if (!initialAdminEmail || !initialAdminUsername || !initialAdminPassword || !initialAdminPhone) {
-      throw new Error("VELOTRACK_INITIAL_ADMIN_CONFIGURATION_INCOMPLETE");
-    }
-
-    await engine.bootstrapInitialAdminIfNeeded({
+    await engine.ensureAdminCredentials({
       adminEmail: initialAdminEmail,
       adminUsername: initialAdminUsername,
       adminPassword: initialAdminPassword,
-      adminPhone: initialAdminPhone
+      adminPhone: initialAdminPhone,
+      mustChangePassword: process.env.VELOTRACK_FORCE_ADMIN_PASSWORD_CHANGE === "true"
     });
 
     const requestListener = createVeloTrackRequestListener({

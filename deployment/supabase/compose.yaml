@@ -22,7 +22,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-postgres}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in deployment/supabase/.env}
       JWT_EXP: ${JWT_EXPIRY:-3600}
-    # Never expose PostgreSQL port 5432 on public host interfaces.
     volumes:
       - supabase-db-data:/var/lib/postgresql/data
     healthcheck:
@@ -58,6 +57,8 @@ services:
       GOTRUE_JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in deployment/supabase/.env}
       GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
       GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "true"
+      GOTRUE_SMS_AUTOCONFIRM: "true"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9999/health"]
       interval: 10s
@@ -102,7 +103,6 @@ services:
       KONG_PLUGINS: request-transformer,cors,key-auth,acl
       SUPABASE_ANON_KEY: ${ANON_KEY:?Set ANON_KEY in deployment/supabase/.env}
       SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY:?Set SERVICE_ROLE_KEY in deployment/supabase/.env}
-    # Bind Kong only to host loopback (127.0.0.1) and private velotrack-shared network.
     ports:
       - "127.0.0.1:8000:8000/tcp"
     volumes:

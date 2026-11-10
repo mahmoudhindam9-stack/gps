@@ -8,7 +8,7 @@ import androidx.room.PrimaryKey
 data class UserProfileEntity(
     @PrimaryKey val id: String,
     val username: String? = null,
-    val email: String,
+    val email: String = "",
     val phone: String,
     val fullName: String,
     val role: String, // ADMIN or CUSTOMER
@@ -49,10 +49,13 @@ data class DeviceProfileEntity(
 data class DeviceEntity(
     @PrimaryKey val id: String,
     val imei: String,
+    val serialNumber: String? = null,
     val traccarDeviceId: Long,
     val profileId: String,
     val currentCustomerId: String,
     val vehicleName: String,
+    val vehicleType: String = "CAR",
+    val vehicleIcon: String = "car",
     val plateNumber: String,
     val simLocalNumber: String,
     val simE164Number: String,
@@ -131,6 +134,23 @@ data class DeviceOwnershipHistoryEntity(
     val reassignedByAdminId: String,
     val reason: String,
     val reassignedAt: Long
+)
+
+@Entity(
+    tableName = "device_commands",
+    indices = [Index(value = ["deviceId"])]
+)
+data class DeviceCommandEntity(
+    @PrimaryKey val id: String,
+    val deviceId: String,
+    val traccarDeviceId: Long,
+    val issuedByUserId: String,
+    val issuedByRole: String,
+    val commandType: String,
+    val status: String, // QUEUED, SENT, DELIVERED, FAILED
+    val failureReason: String? = null,
+    val sentAt: Long,
+    val completedAt: Long? = null
 )
 
 @Entity(

@@ -14,14 +14,13 @@ fi
 
 echo "=== [2/6] Attaching self-hosted Supabase services to '${NETWORK_NAME}' ==="
 if [[ -n "${EXISTING_SUPABASE_COMPOSE_DIR:-}" && -f "${EXISTING_SUPABASE_COMPOSE_DIR}/docker-compose.yml" ]]; then
-  echo "Attaching existing Supabase stack at ${EXISTING_SUPABASE_COMPOSE_DIR} using compose.velotrack-shared.override.yaml..."
   docker compose \
     -f "${EXISTING_SUPABASE_COMPOSE_DIR}/docker-compose.yml" \
     -f "${ROOT_DIR}/deployment/supabase/compose.velotrack-shared.override.yaml" \
     up -d
 else
   if [[ ! -f "${ROOT_DIR}/deployment/supabase/.env" ]]; then
-    echo "ERROR: ${ROOT_DIR}/deployment/supabase/.env is missing. Copy deployment/supabase/.env.example and set real secrets." >&2
+    echo "ERROR: ${ROOT_DIR}/deployment/supabase/.env is missing." >&2
     exit 1
   fi
   docker compose --env-file "${ROOT_DIR}/deployment/supabase/.env" -f "${ROOT_DIR}/deployment/supabase/compose.yaml" config >/dev/null
@@ -30,7 +29,7 @@ fi
 
 echo "=== [3/6] Starting Traccar Server on '${NETWORK_NAME}' ==="
 if [[ ! -f "${ROOT_DIR}/deployment/traccar/.env" ]]; then
-  echo "ERROR: ${ROOT_DIR}/deployment/traccar/.env is missing. Copy deployment/traccar/.env.example and set TRACCAR_DB_PASSWORD." >&2
+  echo "ERROR: ${ROOT_DIR}/deployment/traccar/.env is missing." >&2
   exit 1
 fi
 docker compose --env-file "${ROOT_DIR}/deployment/traccar/.env" -f "${ROOT_DIR}/deployment/traccar/compose.yaml" config >/dev/null
@@ -38,7 +37,7 @@ docker compose --env-file "${ROOT_DIR}/deployment/traccar/.env" -f "${ROOT_DIR}/
 
 echo "=== [4/6] Installing backend dependencies & starting VeloTrack API + HTTPS proxy ==="
 if [[ ! -f "${ROOT_DIR}/backend/.env" ]]; then
-  echo "ERROR: ${ROOT_DIR}/backend/.env is missing. Copy backend/.env.example and set production secrets." >&2
+  echo "ERROR: ${ROOT_DIR}/backend/.env is missing." >&2
   exit 1
 fi
 (cd "${ROOT_DIR}/backend" && npm ci --omit=dev)
@@ -50,7 +49,6 @@ if ss -tulpn | grep -E '0\.0\.0\.0:(8082|5432)|\[::\]:(8082|5432)'; then
   echo "SECURITY ERROR: Port 8082 or 5432 is exposed on a public interface!" >&2
   exit 1
 fi
-echo "Port audit passed: 8082 and 5432 are not publicly exposed."
 
 echo "=== [6/6] Verifying VeloTrack Backend health on 127.0.0.1:3000 ==="
 for i in {1..15}; do
@@ -63,5 +61,4 @@ for i in {1..15}; do
 done
 
 echo "ERROR: VeloTrack Backend did not report healthy within timeout." >&2
-docker compose --env-file "${ROOT_DIR}/backend/.env" -f "${ROOT_DIR}/backend/compose.yaml" logs --tail=50 velotrack-api
 exit 1

@@ -17,6 +17,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -35,8 +36,8 @@ data class ChangePasswordRequestDto(
 data class ServerUserDto(
     val id: String,
     val username: String? = null,
-    val email: String,
-    val phone: String,
+    val email: String? = null,
+    val phone: String = "",
     val fullName: String,
     val role: String,
     val mustChangePassword: Boolean = false,
@@ -48,6 +49,11 @@ data class LoginResponseDto(
     val token: String,
     val mustChangePassword: Boolean = false,
     val user: ServerUserDto
+)
+
+data class WsTicketResponseDto(
+    val ticket: String,
+    val expiresAtMs: Long = 0L
 )
 
 data class ServerDeviceProfileDto(
@@ -67,6 +73,7 @@ data class ServerDeviceProfileDto(
     val gprsonCommandTemplate: String? = null,
     val optionalTimerCommandTemplate: String? = null,
     val expectedReplyPattern: String? = null,
+    val supportedCommands: List<String> = emptyList(),
     val isVerified: Boolean = false
 )
 
@@ -90,10 +97,13 @@ data class CreateProfileRequestDto(
 data class ServerDeviceDto(
     val id: String,
     val imei: String,
+    val serialNumber: String? = null,
     val traccarDeviceId: Long,
     val profileId: String,
     val currentCustomerId: String,
     val vehicleName: String,
+    val vehicleType: String = "CAR",
+    val vehicleIcon: String = "car",
     val plateNumber: String,
     val simLocalNumber: String,
     val simE164Number: String,
@@ -156,6 +166,19 @@ data class ServerOwnershipHistoryDto(
     val reassignedAtMs: Long = 0L
 )
 
+data class ServerDeviceCommandDto(
+    val id: String,
+    val deviceId: String,
+    val traccarDeviceId: Long = 0L,
+    val issuedByUserId: String = "",
+    val issuedByRole: String = "CUSTOMER",
+    val commandType: String,
+    val status: String,
+    val failureReason: String? = null,
+    val sentAtMs: Long = 0L,
+    val completedAtMs: Long? = null
+)
+
 data class ServerDeviceBundleDto(
     val device: ServerDeviceDto,
     val subscription: ServerSubscriptionDto,
@@ -163,22 +186,36 @@ data class ServerDeviceBundleDto(
     val profile: ServerDeviceProfileDto? = null,
     val smsLogs: List<ServerSmsLogDto> = emptyList(),
     val subscriptionHistory: List<ServerSubHistoryDto> = emptyList(),
-    val ownershipHistory: List<ServerOwnershipHistoryDto> = emptyList()
+    val ownershipHistory: List<ServerOwnershipHistoryDto> = emptyList(),
+    val commands: List<ServerDeviceCommandDto> = emptyList()
 )
 
 data class ActivateDeviceRequestDto(
     val profileId: String,
     val imei: String,
+    val serialNumber: String? = null,
     val customerId: String,
     val vehicleName: String,
+    val vehicleType: String = "CAR",
+    val vehicleIcon: String = "car",
     val plateNumber: String,
     val planDuration: String,
-    val simLocalWithoutPlus20: String
+    val simLocalWithoutPlus20: String,
+    val autoSendSms: Boolean = true
 )
 
 data class ActivateDeviceResponseDto(
     val device: ServerDeviceDto,
     val subscription: ServerSubscriptionDto,
+    val smsLogs: List<ServerSmsLogDto> = emptyList()
+)
+
+data class SendActivationSmsRequestDto(
+    val idempotencyKey: String? = null
+)
+
+data class SendActivationSmsResponseDto(
+    val duplicatePrevented: Boolean = false,
     val smsLogs: List<ServerSmsLogDto> = emptyList()
 )
 
@@ -193,6 +230,25 @@ data class ReassignCustomerRequestDto(
 
 data class RenewSubscriptionRequestDto(
     val planDuration: String
+)
+
+data class ReasonRequestDto(
+    val reason: String
+)
+
+data class UpdateVehicleMetadataRequestDto(
+    val vehicleName: String? = null,
+    val vehicleType: String? = null,
+    val vehicleIcon: String? = null,
+    val plateNumber: String? = null,
+    val serialNumber: String? = null,
+    val simLocalWithoutPlus20: String? = null
+)
+
+data class SendDeviceCommandRequestDto(
+    val type: String,
+    val attributes: Map<String, Any?> = emptyMap(),
+    val confirmed: Boolean = false
 )
 
 data class ServerRoutePointDto(
@@ -268,6 +324,9 @@ interface VeloTrackApiService {
         @Body request: ChangePasswordRequestDto
     ): Response<LoginResponseDto>
 
+    @POST("api/v1/auth/ws-ticket")
+    suspend fun createWsTicket(): Response<WsTicketResponseDto>
+
     @GET("api/v1/auth/me")
     suspend fun getMe(): Response<ServerUserDto>
 
@@ -290,6 +349,18 @@ interface VeloTrackApiService {
         @Body request: ActivateDeviceRequestDto
     ): Response<ActivateDeviceResponseDto>
 
+    @POST("api/v1/admin/devices/{deviceId}/send-activation-sms")
+    suspend fun sendActivationSms(
+        @Path("deviceId") deviceId: String,
+        @Body request: SendActivationSmsRequestDto = SendActivationSmsRequestDto()
+    ): Response<SendActivationSmsResponseDto>
+
+    @PATCH("api/v1/admin/devices/{deviceId}")
+    suspend fun updateVehicleMetadata(
+        @Path("deviceId") deviceId: String,
+        @Body request: UpdateVehicleMetadataRequestDto
+    ): Response<ServerDeviceDto>
+
     @POST("api/v1/admin/devices/{deviceId}/override-activate")
     suspend fun adminOverrideActivation(
         @Path("deviceId") deviceId: String,
@@ -308,6 +379,24 @@ interface VeloTrackApiService {
         @Body request: RenewSubscriptionRequestDto
     ): Response<Map<String, Any?>>
 
+    @POST("api/v1/admin/devices/{deviceId}/suspend")
+    suspend fun suspendSubscription(
+        @Path("deviceId") deviceId: String,
+        @Body request: ReasonRequestDto
+    ): Response<Map<String, Any?>>
+
+    @POST("api/v1/admin/devices/{deviceId}/resume")
+    suspend fun resumeSubscription(
+        @Path("deviceId") deviceId: String,
+        @Body request: ReasonRequestDto
+    ): Response<Map<String, Any?>>
+
+    @POST("api/v1/devices/{deviceId}/commands")
+    suspend fun sendDeviceCommand(
+        @Path("deviceId") deviceId: String,
+        @Body request: SendDeviceCommandRequestDto
+    ): Response<ServerDeviceCommandDto>
+
     @GET("api/v1/devices/{deviceId}/history")
     suspend fun getDeviceRouteHistory(
         @Path("deviceId") deviceId: String,
@@ -319,7 +408,22 @@ interface VeloTrackApiService {
     suspend fun triggerTraccarSync(): Response<TraccarSyncResponseDto>
 }
 
+data class GitHubReleaseAssetDto(
+    val name: String = "",
+    val browser_download_url: String = ""
+)
+
+data class GitHubReleaseDto(
+    val tag_name: String = "",
+    val name: String? = null,
+    val html_url: String? = null,
+    val body: String? = null,
+    val published_at: String? = null,
+    val assets: List<GitHubReleaseAssetDto> = emptyList()
+)
+
 object VeloTrackNetworkClient {
+    const val DEFAULT_GITHUB_REPO = "mahmoudhindam9-stack/gps"
     private const val DEFAULT_PUBLIC_HTTPS_API =
         "https://api.velotrack.local/"
 
@@ -402,5 +506,30 @@ object VeloTrackNetworkClient {
             .header("Authorization", "Bearer $token")
             .build()
         return createOkHttpClient(context).newWebSocket(request, listener)
+    }
+
+    fun fetchLatestGitHubRelease(repo: String = DEFAULT_GITHUB_REPO): GitHubReleaseDto? {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(6, TimeUnit.SECONDS)
+            .build()
+        val adapter = moshi.adapter(GitHubReleaseDto::class.java)
+        val latestReq = Request.Builder()
+            .url("https://api.github.com/repos/$repo/releases/latest")
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "VeloTrack-Android/${BuildConfig.VERSION_NAME}")
+            .build()
+
+        runCatching {
+            client.newCall(latestReq).execute().use { res ->
+                if (res.isSuccessful) {
+                    val body = res.body?.string()
+                    if (!body.isNullOrBlank()) {
+                        return adapter.fromJson(body)
+                    }
+                }
+            }
+        }
+        return null
     }
 }

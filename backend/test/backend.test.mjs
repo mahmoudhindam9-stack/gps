@@ -10,7 +10,9 @@ import {
   SupabaseAuthService,
   SupabaseDatabaseAdapter,
   TraccarBridgeClient,
-  VeloTrackEngine
+  VeloTrackEngine,
+  normalizeEgyptianPhone,
+  isValidImei
 } from "../src/core.mjs";
 import { createVeloTrackHttpServer } from "../src/server.mjs";
 
@@ -374,12 +376,11 @@ test("3. Full-stack Supabase RLS tenant isolation, SMS state transitions, Tracca
     }
   });
 
-  // Connect Customer A and Customer B to `/ws/live`
+  // Connect Customer A using a short-lived single-use WS ticket and Customer B via Bearer header
+  const ticketA = authService.issueWebSocketTicket(custAClaims);
   const wsFramesA = [];
   const wsFramesB = [];
-  const clientWsA = new WebSocket(`ws://127.0.0.1:${apiPort}/ws/live`, {
-    headers: { Authorization: `Bearer ${custASession.token}` }
-  });
+  const clientWsA = new WebSocket(`ws://127.0.0.1:${apiPort}/ws/live?ticket=${encodeURIComponent(ticketA.ticket)}`);
   const clientWsB = new WebSocket(`ws://127.0.0.1:${apiPort}/ws/live`, {
     headers: { Authorization: `Bearer ${custBSession.token}` }
   });
@@ -448,7 +449,8 @@ test("3. Full-stack Supabase RLS tenant isolation, SMS state transitions, Tracca
   // Verify Customer B still received zero device updates for Customer A's vehicle
   assert.equal(wsFramesB.length, 1);
 
-  // Verify subscription expiration blocks route history and redacts customer coordinates
+  // Verify subscription expiration blocks customer route history and redacts customer coordinates,
+  // while ADMIN can still inspect expired vehicles and route history.
   const expiredNowMs = liveEvent.devices[0].subscription.expiresAtMs + 5000;
   await assert.rejects(
     () =>
@@ -461,9 +463,22 @@ test("3. Full-stack Supabase RLS tenant isolation, SMS state transitions, Tracca
     /SUBSCRIPTION_EXPIRED/
   );
 
+  // Admin can inspect route history even when subscription is expired
+  const adminHistory = await engine.getAuthorizedRouteHistory(adminClaims, {
+    deviceId,
+    fromIso: "2026-04-08T00:00:00.000Z",
+    toIso: "2026-04-09T00:00:00.000Z",
+    nowMs: expiredNowMs
+  });
+  assert.equal(adminHistory.length, 1);
+
   const expiredViewA = await engine.listAuthorizedDevices(custAClaims, expiredNowMs);
   assert.equal(expiredViewA[0].subscription.status, "EXPIRED");
   assert.equal(expiredViewA[0].device.lastLat, null);
+
+  const adminViewExpired = await engine.listAuthorizedDevices(adminClaims, expiredNowMs);
+  assert.equal(adminViewExpired[0].subscription.status, "EXPIRED");
+  assert.equal(adminViewExpired[0].device.lastLat, 30.0561);
 
   // Reassign device to Customer B and renew subscription
   await engine.reassignCustomer(adminClaims, {
@@ -600,5 +615,456 @@ test("4. PR #2 production hardening: fail-closed startup validation, /api/v1/hea
   assert.equal(degradedBody.databaseError, "CONNECTION_CLOSED");
 
   await new Promise((resolve) => server.close(resolve));
+});
+
+test("5. Complete User, Vehicle, Subscription & GPS Control System: phone/username accounts without email, customer details, multi-vehicle provisioning, idempotent SMS, Traccar rollback, vehicle icons, suspend/resume, and audited Traccar commands", async () => {
+  const pglite = new PGlite();
+  const db = new SupabaseDatabaseAdapter({ pglite });
+  await db.applySchemaMigration();
+
+  // Verify IMEI and Egyptian phone normalization helpers
+  assert.equal(isValidImei("358739051122332"), true);
+  assert.equal(isValidImei("12345"), false);
+  assert.deepEqual(normalizeEgyptianPhone("01012345678"), {
+    isValid: true,
+    localNumber: "01012345678",
+    e164Number: "+201012345678",
+    errorReason: null
+  });
+  assert.deepEqual(normalizeEgyptianPhone("+201298765432"), {
+    isValid: true,
+    localNumber: "01298765432",
+    e164Number: "+201298765432",
+    errorReason: null
+  });
+
+  // Track Traccar REST calls (devices created, updated, deleted, commands sent)
+  let nextTraccarId = 700;
+  const traccarDevicesById = new Map();
+  const sentTraccarCommands = [];
+
+  const mockTraccarFetch = async (urlStr, options = {}) => {
+    const url = new URL(urlStr);
+    const method = options.method ?? "GET";
+
+    if (method === "POST" && url.pathname === "/api/session") {
+      return new Response(JSON.stringify({ id: 1 }), {
+        status: 200,
+        headers: { "set-cookie": "JSESSIONID=tc_cmd_session_777; Path=/; HttpOnly" }
+      });
+    }
+    if (method === "POST" && url.pathname === "/api/devices") {
+      const body = JSON.parse(options.body);
+      const id = ++nextTraccarId;
+      const dev = { id, name: body.name, uniqueId: body.uniqueId, category: body.category ?? "car" };
+      traccarDevicesById.set(id, dev);
+      return new Response(JSON.stringify(dev), { status: 200 });
+    }
+    if (method === "PUT" && url.pathname.startsWith("/api/devices/")) {
+      const id = Number(url.pathname.split("/").pop());
+      const body = JSON.parse(options.body);
+      const updated = { id, name: body.name, uniqueId: body.uniqueId, category: body.category ?? "car" };
+      traccarDevicesById.set(id, updated);
+      return new Response(JSON.stringify(updated), { status: 200 });
+    }
+    if (method === "DELETE" && url.pathname.startsWith("/api/devices/")) {
+      const id = Number(url.pathname.split("/").pop());
+      traccarDevicesById.delete(id);
+      return new Response("", { status: 204 });
+    }
+    if (method === "GET" && url.pathname === "/api/commands/types") {
+      return new Response(
+        JSON.stringify([
+          { type: "positionSingle" },
+          { type: "engineStop" },
+          { type: "engineResume" },
+          { type: "outputControl" },
+          { type: "rebootDevice" },
+          { type: "setTimezone" },
+          { type: "custom" }
+        ]),
+        { status: 200 }
+      );
+    }
+    if (method === "POST" && url.pathname === "/api/commands/send") {
+      const body = JSON.parse(options.body);
+      const cmdRecord = {
+        id: 8000 + sentTraccarCommands.length + 1,
+        deviceId: body.deviceId,
+        type: body.type,
+        attributes: body.attributes ?? {}
+      };
+      sentTraccarCommands.push(cmdRecord);
+      return new Response(JSON.stringify(cmdRecord), { status: 200 });
+    }
+    return new Response("Not Found", { status: 404 });
+  };
+
+  const authService = new SupabaseAuthService({
+    supabaseJwtSecret: TEST_JWT_SECRET,
+    dbAdapter: db
+  });
+  const traccarClient = new TraccarBridgeClient({
+    baseUrl: "http://127.0.0.1:8082",
+    adminEmail: "admin@velotrack.local",
+    adminPassword: "secret",
+    fetchImpl: mockTraccarFetch
+  });
+
+  let smsSendCount = 0;
+  const smsGateway = {
+    async sendSms({ toE164, text }) {
+      smsSendCount += 1;
+      return {
+        gatewayMessageId: `gw-sms-${smsSendCount}`,
+        initialStatus: "ACCEPTED",
+        toE164,
+        text
+      };
+    }
+  };
+
+  const engine = new VeloTrackEngine({
+    dbAdapter: db,
+    authService,
+    traccarClient,
+    smsGateway
+  });
+
+  await engine.bootstrapInitialAdminIfNeeded({
+    adminEmail: "admin@velotrack.local",
+    adminUsername: "admin",
+    adminPassword: "Admin@123456",
+    adminPhone: "01000000001"
+  });
+  const firstLogin = await engine.login("admin", "Admin@123456");
+  const adminSession = await engine.changePassword(
+    authService.verifyToken(firstLogin.token),
+    { currentPassword: "Admin@123456", newPassword: "AdminStrongPassword#2026" }
+  );
+  const adminClaims = authService.verifyToken(adminSession.token);
+
+  // 1 & 2. Admin creation of ADMIN and CUSTOMER users with fullName, phone, username, password (NO email)
+  const opsAdmin = await engine.createUserAccount(adminClaims, {
+    fullName: "Operations Supervisor",
+    phone: "01022223333",
+    username: "ops_admin",
+    password: "OpsPassword#2026",
+    role: "ADMIN"
+  });
+  assert.equal(opsAdmin.role, "ADMIN");
+  assert.equal(opsAdmin.email, null);
+  assert.equal(opsAdmin.phone, "+201022223333");
+
+  const customer1 = await engine.createUserAccount(adminClaims, {
+    fullName: "Mahmoud Logistics",
+    phone: "01144445555",
+    username: "mahmoud_fleet",
+    password: "FleetPassword#2026",
+    role: "CUSTOMER"
+  });
+  assert.equal(customer1.role, "CUSTOMER");
+  assert.equal(customer1.email, null);
+  assert.equal(customer1.phone, "+201144445555");
+
+  // 3 & 4. Login by username and login by phone (local 011... and E.164 +2011...)
+  const loginByUsername = await engine.login("mahmoud_fleet", "FleetPassword#2026");
+  assert.equal(loginByUsername.user.id, customer1.id);
+
+  const loginByLocalPhone = await engine.login("01144445555", "FleetPassword#2026");
+  assert.equal(loginByLocalPhone.user.id, customer1.id);
+
+  const loginByE164Phone = await engine.login("+201144445555", "FleetPassword#2026");
+  assert.equal(loginByE164Phone.user.id, customer1.id);
+
+  const customer1Claims = authService.verifyToken(loginByUsername.token);
+
+  // 5. Reject duplicate usernames and duplicate normalized phone numbers
+  await assert.rejects(
+    () =>
+      engine.createUserAccount(adminClaims, {
+        fullName: "Duplicate User",
+        phone: "01566667777",
+        username: "mahmoud_fleet",
+        password: "Password#2026",
+        role: "CUSTOMER"
+      }),
+    /DUPLICATE_USERNAME|USERNAME_ALREADY_EXISTS/
+  );
+  await assert.rejects(
+    () =>
+      engine.createUserAccount(adminClaims, {
+        fullName: "Duplicate Phone",
+        phone: "+201144445555",
+        username: "unique_username",
+        password: "Password#2026",
+        role: "CUSTOMER"
+      }),
+    /DUPLICATE_PHONE|PHONE_ALREADY_EXISTS/
+  );
+
+  // 7. Non-admin forbidden access on admin endpoints
+  await assert.rejects(
+    () =>
+      engine.createUserAccount(customer1Claims, {
+        fullName: "Unauthorized Create",
+        phone: "01099998888",
+        username: "unauth_user",
+        password: "Password#2026",
+        role: "CUSTOMER"
+      }),
+    /FORBIDDEN_ADMIN_ONLY/
+  );
+
+  // 6. Edit user, deactivate, reactivate, and safe delete rules
+  const editedAdmin = await engine.updateUserAccount(adminClaims, opsAdmin.id, {
+    fullName: "Senior Ops Supervisor",
+    phone: "01022224444"
+  });
+  assert.equal(editedAdmin.fullName, "Senior Ops Supervisor");
+  assert.equal(editedAdmin.phone, "+201022224444");
+
+  const deactivated = await engine.setUserActiveStatus(adminClaims, opsAdmin.id, { isActive: false });
+  assert.equal(deactivated.isActive, false);
+  await assert.rejects(
+    () => engine.login("ops_admin", "OpsPassword#2026"),
+    /ACCOUNT_DISABLED|ACCOUNT_DEACTIVATED/
+  );
+
+  const reactivated = await engine.setUserActiveStatus(adminClaims, opsAdmin.id, { isActive: true });
+  assert.equal(reactivated.isActive, true);
+  const opsLogin = await engine.login("ops_admin", "OpsPassword#2026");
+  assert.equal(opsLogin.user.id, opsAdmin.id);
+
+  // Primary bootstrapped administrator cannot be deleted
+  await assert.rejects(
+    () => engine.deleteUserAccount(adminClaims, adminSession.user.id),
+    /CANNOT_DELETE_PRIMARY_ADMIN|PRIMARY_ADMIN_CANNOT_BE_DELETED/
+  );
+
+  // Register and verify GT06N profile
+  const profile = await engine.registerDeviceProfile(adminClaims, {
+    manufacturer: "Concox",
+    model: "GT06N",
+    firmwareVersion: "V5.0",
+    serverHost: "gps.velotrack.local",
+    serverPort: 5023,
+    serverCommandTemplate: "SERVER,1,gps.velotrack.local,5023,0#"
+  });
+  await engine.markProfileVerifiedAfterPhysicalTest(adminClaims, profile.id);
+
+  // 9. Add multiple vehicles under a single customer with independent subscriptions and staged SMS
+  const v1 = await engine.provisionAndActivateDevice(adminClaims, {
+    profileId: profile.id,
+    imei: "358739051122332",
+    serialNumber: "SN-GT06N-001",
+    customerId: customer1.id,
+    vehicleName: "Cairo Delivery Van 1",
+    vehicleType: "VAN",
+    vehicleIcon: "van",
+    plateNumber: " أ ب ج 123 ",
+    planDuration: "MONTH_3",
+    simLocalWithoutPlus20: "01012345678",
+    sendActivationSmsNow: false
+  });
+  assert.equal(v1.device.vehicleType, "VAN");
+  assert.equal(v1.device.vehicleIcon, "van");
+  assert.equal(v1.device.serialNumber, "SN-GT06N-001");
+  assert.equal(v1.device.activationStatus, "PENDING");
+  assert.equal(smsSendCount, 0);
+
+  // 13. Send Activation Message button with idempotency protection (no duplicate SMS on repeated clicks)
+  const smsDispatch1 = await engine.sendDeviceActivationSms(adminClaims, {
+    deviceId: v1.device.id,
+    idempotencyKey: "idem-v1-btn-click-1"
+  });
+  assert.equal(smsDispatch1.duplicatePrevented, false);
+  assert.equal(smsSendCount, 1);
+
+  const smsDispatchDuplicateKey = await engine.sendDeviceActivationSms(adminClaims, {
+    deviceId: v1.device.id,
+    idempotencyKey: "idem-v1-btn-click-1"
+  });
+  assert.equal(smsDispatchDuplicateKey.duplicatePrevented, true);
+  assert.equal(smsSendCount, 1);
+
+  const smsDispatchDuplicateActive = await engine.sendDeviceActivationSms(adminClaims, {
+    deviceId: v1.device.id,
+    idempotencyKey: "idem-v1-btn-click-2",
+    forceResend: false
+  });
+  assert.equal(smsDispatchDuplicateActive.duplicatePrevented, true);
+  assert.equal(smsSendCount, 1);
+
+  // Provision second vehicle for the same customer with immediate SMS dispatch
+  const v2 = await engine.provisionAndActivateDevice(adminClaims, {
+    profileId: profile.id,
+    imei: "358739059988775",
+    serialNumber: "SN-GT06N-002",
+    customerId: customer1.id,
+    vehicleName: "Alexandria Heavy Truck 2",
+    vehicleType: "TRUCK",
+    vehicleIcon: "truck",
+    plateNumber: " س ص ع 999 ",
+    planDuration: "MONTH_12",
+    simLocalWithoutPlus20: "01287654321",
+    sendActivationSmsNow: true
+  });
+  assert.equal(v2.device.vehicleType, "TRUCK");
+  assert.equal(v2.device.vehicleIcon, "truck");
+  assert.equal(smsSendCount, 2);
+
+  // 10. Duplicate IMEI rejection and Traccar rollback when PostgreSQL insert fails
+  const traccarCountBeforeDup = traccarDevicesById.size;
+  await assert.rejects(
+    () =>
+      engine.provisionAndActivateDevice(adminClaims, {
+        profileId: profile.id,
+        imei: "358739051122332",
+        customerId: customer1.id,
+        vehicleName: "Duplicate IMEI Vehicle",
+        planDuration: "MONTH_1",
+        simLocalWithoutPlus20: "01055556666"
+      }),
+    /DUPLICATE_IMEI|IMEI_ALREADY_REGISTERED/
+  );
+  assert.equal(traccarDevicesById.size, traccarCountBeforeDup);
+
+  // Blocking deletion of a customer who still has assigned vehicles
+  await assert.rejects(
+    () => engine.deleteUserAccount(adminClaims, customer1.id),
+    /USER_HAS_ASSIGNED_VEHICLES/
+  );
+
+  // Safe soft-delete of a user with 0 assigned vehicles preserves historical records
+  const deletedOps = await engine.deleteUserAccount(adminClaims, opsAdmin.id);
+  assert.equal(deletedOps.deleted, true);
+
+  // 11. Vehicle metadata and icon update persistence
+  const updatedV1 = await engine.updateVehicleMetadata(adminClaims, v1.device.id, {
+    vehicleName: "Cairo Refrigerated Van 1",
+    vehicleType: "VAN",
+    vehicleIcon: "pickup",
+    plateNumber: " أ ب ج 456 ",
+    serialNumber: "SN-GT06N-001-REV2",
+    simLocalWithoutPlus20: "01012345679"
+  });
+  assert.equal(updatedV1.device.vehicleName, "Cairo Refrigerated Van 1");
+  assert.equal(updatedV1.device.vehicleIcon, "pickup");
+  assert.equal(updatedV1.device.serialNumber, "SN-GT06N-001-REV2");
+  assert.equal(updatedV1.device.simNumber, "+201012345679");
+
+  // Activate v1 via real GPS fix and suspend v2 to test customer details summary counts
+  await engine.ingestTraccarUpdate({
+    traccarDevices: [
+      {
+        id: v1.device.traccarDeviceId,
+        name: updatedV1.device.vehicleName,
+        uniqueId: v1.device.imei,
+        status: "online",
+        lastUpdate: "2026-04-10T12:00:00.000Z"
+      }
+    ],
+    traccarPositions: [
+      {
+        id: 9501,
+        deviceId: v1.device.traccarDeviceId,
+        valid: true,
+        latitude: 30.0444,
+        longitude: 31.2357,
+        speed: 42,
+        course: 120,
+        fixTime: "2026-04-10T12:00:00.000Z",
+        attributes: { ignition: true }
+      }
+    ]
+  });
+
+  // 16. Suspend and resume subscription transitions
+  const suspendedV2 = await engine.suspendSubscription(adminClaims, {
+    deviceId: v2.device.id,
+    reason: "Temporary seasonal pause"
+  });
+  assert.equal(suspendedV2.subscription.status, "SUSPENDED");
+
+  // 8. Customer details retrieval with accurate summary counts
+  const customerDetails = await engine.getCustomerDetails(adminClaims, customer1.id);
+  assert.equal(customerDetails.customer.id, customer1.id);
+  assert.equal(customerDetails.summary.totalVehicles, 2);
+  assert.equal(customerDetails.summary.totalSubscriptions, 2);
+  assert.equal(customerDetails.summary.activeSubscriptionsCount, 1);
+  assert.equal(customerDetails.summary.suspendedSubscriptionsCount, 1);
+  assert.equal(customerDetails.summary.pendingSubscriptionsCount, 0);
+  assert.equal(customerDetails.summary.expiredSubscriptionsCount, 0);
+
+  // Resume v2 subscription
+  const resumedV2 = await engine.resumeSubscription(adminClaims, {
+    deviceId: v2.device.id,
+    reason: "Customer resumed seasonal operations"
+  });
+  assert.equal(resumedV2.subscription.status, "AWAITING_FIRST_CONNECTION");
+
+  // 14 & 15. Supported commands, unsupported command rejection, sensitive command confirmation & audit trail
+  const supportedCmds = await engine.getSupportedDeviceCommands(customer1Claims, v1.device.id);
+  assert.ok(supportedCmds.some((c) => c.type === "positionSingle"));
+  assert.ok(supportedCmds.some((c) => c.type === "engineStop" && c.sensitive === true));
+
+  // Non-sensitive command executes immediately
+  const posCmd = await engine.sendAuthorizedDeviceCommand(customer1Claims, {
+    deviceId: v1.device.id,
+    type: "positionSingle"
+  });
+  assert.equal(posCmd.commandType, "positionSingle");
+  assert.equal(posCmd.status, "SENT");
+
+  // Sensitive command (engineStop) without confirmation must be rejected
+  await assert.rejects(
+    () =>
+      engine.sendAuthorizedDeviceCommand(customer1Claims, {
+        deviceId: v1.device.id,
+        type: "engineStop",
+        confirmedSensitive: false
+      }),
+    /SENSITIVE_COMMAND_CONFIRMATION_REQUIRED/
+  );
+
+  // Sensitive command with confirmation succeeds and is audited
+  const stopCmd = await engine.sendAuthorizedDeviceCommand(customer1Claims, {
+    deviceId: v1.device.id,
+    type: "engineStop",
+    confirmedSensitive: true
+  });
+  assert.equal(stopCmd.commandType, "engineStop");
+  assert.equal(stopCmd.status, "SENT");
+
+  // Unsupported command type must be rejected
+  await assert.rejects(
+    () =>
+      engine.sendAuthorizedDeviceCommand(customer1Claims, {
+        deviceId: v1.device.id,
+        type: "selfDestructUnsupported",
+        confirmedSensitive: true
+      }),
+    /UNSUPPORTED_DEVICE_COMMAND|UNSUPPORTED_COMMAND_TYPE/
+  );
+
+  const cmdHistory = await engine.listDeviceCommandHistory(customer1Claims, v1.device.id);
+  assert.equal(cmdHistory.length, 2);
+  assert.equal(cmdHistory[0].commandType, "engineStop");
+  assert.equal(cmdHistory[1].commandType, "positionSingle");
+
+  // 17. Ensure default admin credentials (`admin` / `Admin@123456`) and GitHub release auto-update check
+  await engine.ensureAdminCredentials({
+    adminUsername: "admin",
+    adminPassword: "Admin@123456",
+    mustChangePassword: false
+  });
+  const directAdminSession = await engine.login("admin", "Admin@123456");
+  assert.equal(directAdminSession.user.username, "admin");
+  assert.equal(directAdminSession.user.role, "ADMIN");
+  assert.equal(directAdminSession.mustChangePassword, false);
+
+  engine.clearAllTimers();
+  await db.close();
 });
 

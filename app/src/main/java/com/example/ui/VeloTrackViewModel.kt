@@ -10,9 +10,13 @@ import com.example.data.local.VeloTrackDatabase
 import com.example.data.model.ActivationStatus
 import com.example.data.model.AuthenticatedSession
 import com.example.data.model.DeviceAggregate
+import com.example.data.model.GitHubReleaseState
 import com.example.data.model.PlanDuration
 import com.example.data.model.SubscriptionStatus
+import com.example.data.model.TraccarCommandType
 import com.example.data.model.UserRole
+import com.example.data.model.VehicleIcon
+import com.example.data.model.VehicleType
 import com.example.data.network.VeloTrackNetworkClient
 import com.example.data.repository.ServerStatusSnapshot
 import com.example.data.repository.VeloTrackRepository
@@ -41,8 +45,11 @@ enum class FleetFilter(val shortLabel: String) {
 data class ActivationFormState(
     val selectedProfileId: String = "",
     val imei: String = "",
+    val serialNumber: String = "",
     val customerId: String = "",
     val vehicleName: String = "",
+    val vehicleType: VehicleType = VehicleType.CAR,
+    val vehicleIcon: VehicleIcon = VehicleIcon.CAR,
     val plateNumber: String = "",
     val planDuration: PlanDuration = PlanDuration.MONTH_12,
     val simLocalWithoutPlus20: String = "",
@@ -90,6 +97,15 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
 
     val session: StateFlow<AuthenticatedSession?> = repository.session
     val serverStatus: StateFlow<ServerStatusSnapshot> = repository.serverStatus
+    val releaseState: StateFlow<GitHubReleaseState> = repository.releaseState
+
+    init {
+        viewModelScope.launch {
+            if (releaseState.value.autoUpdateEnabled) {
+                repository.checkGitHubRelease()
+            }
+        }
+    }
 
     val allUsers: StateFlow<List<UserProfileEntity>> = repository.allUsers
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -113,6 +129,7 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
             }
             FleetFilter.EXPIRED -> list.filter {
                 it.subscription.status == SubscriptionStatus.EXPIRED.name ||
+                    it.subscription.status == SubscriptionStatus.SUSPENDED.name ||
                     (it.subscription.status == SubscriptionStatus.ACTIVE.name && !it.isSubscriptionAccessible(now))
             }
         }
@@ -145,6 +162,28 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
         repository.updateBackendBaseUrl(url)
     }
 
+    fun toggleAutoUpdate() {
+        val next = !releaseState.value.autoUpdateEnabled
+        repository.setAutoUpdateEnabled(next)
+        if (next) {
+            checkGitHubRelease()
+        }
+    }
+
+    fun checkGitHubRelease() {
+        viewModelScope.launch {
+            val res = repository.checkGitHubRelease()
+            res.onSuccess { info ->
+                showBanner(
+                    if (info.updateAvailable) "Update ${info.tagName} available"
+                    else "Up to date (${info.tagName})"
+                )
+            }.onFailure { err ->
+                showBanner(err.message ?: "GitHub check failed")
+            }
+        }
+    }
+
     fun login(identifier: String, password: String) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -152,7 +191,7 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
             _isLoading.value = false
             res.onSuccess { auth ->
                 _currentTab.value = AppTab.MAP
-                val label = auth.username ?: auth.email
+                val label = auth.username ?: auth.email.ifBlank { auth.fullName }
                 showBanner(
                     if (auth.mustChangePassword) "Password change required"
                     else "${auth.role.shortLabel} • $label"
@@ -170,7 +209,7 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
             _isLoading.value = false
             res.onSuccess { auth ->
                 _currentTab.value = AppTab.MAP
-                showBanner("${auth.role.shortLabel} • ${auth.username ?: auth.email}")
+                showBanner("${auth.role.shortLabel} • ${auth.username ?: auth.email.ifBlank { auth.fullName }}")
             }.onFailure { err ->
                 showBanner(err.message ?: "Password update failed")
             }
@@ -229,8 +268,11 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
             val result = repository.activateDeviceBySms(
                 profileId = form.selectedProfileId,
                 imei = form.imei,
+                serialNumber = form.serialNumber,
                 customerId = form.customerId,
                 vehicleName = form.vehicleName,
+                vehicleType = form.vehicleType,
+                vehicleIcon = form.vehicleIcon,
                 plateNumber = form.plateNumber,
                 planDuration = form.planDuration,
                 simLocalInput = form.simLocalWithoutPlus20
@@ -240,6 +282,8 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
                 _activationForm.value = ActivationFormState(
                     selectedProfileId = form.selectedProfileId,
                     customerId = form.customerId,
+                    vehicleType = form.vehicleType,
+                    vehicleIcon = form.vehicleIcon,
                     planDuration = form.planDuration,
                     lastActivatedDeviceId = newDeviceId
                 )
@@ -247,6 +291,19 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
                 showBanner("SMS_SENT")
             }.onFailure { err ->
                 _activationForm.value = form.copy(errorMessage = err.message ?: "Activation failed")
+            }
+        }
+    }
+
+    fun sendActivationSms(deviceId: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val res = repository.sendActivationSms(deviceId)
+            _isLoading.value = false
+            res.onSuccess { duplicatePrevented ->
+                showBanner(if (duplicatePrevented) "SMS already active" else "SMS_SENT")
+            }.onFailure { err ->
+                showBanner(err.message ?: "Send SMS failed")
             }
         }
     }
@@ -286,6 +343,45 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
                 showBanner("Renewed (${planDuration.shortLabel})")
             }.onFailure { err ->
                 showBanner(err.message ?: "Renewal failed")
+            }
+        }
+    }
+
+    fun suspendDeviceSubscription(deviceId: String, reason: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val res = repository.suspendDeviceSubscription(deviceId, reason)
+            _isLoading.value = false
+            res.onSuccess {
+                showBanner("SUSPENDED")
+            }.onFailure { err ->
+                showBanner(err.message ?: "Suspend failed")
+            }
+        }
+    }
+
+    fun resumeDeviceSubscription(deviceId: String, reason: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val res = repository.resumeDeviceSubscription(deviceId, reason)
+            _isLoading.value = false
+            res.onSuccess {
+                showBanner("ACTIVE")
+            }.onFailure { err ->
+                showBanner(err.message ?: "Resume failed")
+            }
+        }
+    }
+
+    fun sendDeviceCommand(deviceId: String, commandType: TraccarCommandType) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val res = repository.sendDeviceCommand(deviceId, commandType, confirmed = true)
+            _isLoading.value = false
+            res.onSuccess { status ->
+                showBanner("${commandType.shortLabel}: $status")
+            }.onFailure { err ->
+                showBanner(err.message ?: "Command failed")
             }
         }
     }

@@ -20,9 +20,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -48,6 +53,8 @@ import com.example.data.local.UserProfileEntity
 import com.example.data.model.ActivationStatus
 import com.example.data.model.DeviceAggregate
 import com.example.data.model.PlanDuration
+import com.example.data.model.SubscriptionStatus
+import com.example.data.model.TraccarCommandType
 import com.example.data.model.UserRole
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.StatusExpiredCrimson
@@ -62,6 +69,9 @@ fun DevicesAndSubscriptionsScreen(
     activeRole: UserRole,
     onReassignCustomer: (String, String, String) -> Unit,
     onRenewSubscription: (String, PlanDuration) -> Unit,
+    onSuspendSubscription: (String, String) -> Unit = { _, _ -> },
+    onResumeSubscription: (String, String) -> Unit = { _, _ -> },
+    onSendCommand: (String, TraccarCommandType) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val customerAccounts = customers.filter { it.role == UserRole.CUSTOMER.name }
@@ -71,6 +81,11 @@ fun DevicesAndSubscriptionsScreen(
 
     var renewTargetDevice by remember { mutableStateOf<DeviceAggregate?>(null) }
     var selectedRenewPlan by remember { mutableStateOf(PlanDuration.MONTH_12) }
+
+    var suspendResumeTarget by remember { mutableStateOf<Pair<DeviceAggregate, Boolean>?>(null) }
+    var suspendResumeReason by remember { mutableStateOf("") }
+
+    var pendingSensitiveCommand by remember { mutableStateOf<Pair<DeviceAggregate, TraccarCommandType>?>(null) }
 
     Column(
         modifier = modifier
@@ -114,6 +129,17 @@ fun DevicesAndSubscriptionsScreen(
                     },
                     onOpenRenew = {
                         renewTargetDevice = agg
+                    },
+                    onOpenSuspendResume = { isSuspend ->
+                        suspendResumeTarget = agg to isSuspend
+                        suspendResumeReason = ""
+                    },
+                    onTriggerCommand = { cmdType ->
+                        if (cmdType.isSensitive) {
+                            pendingSensitiveCommand = agg to cmdType
+                        } else {
+                            onSendCommand(agg.device.id, cmdType)
+                        }
                     }
                 )
             }
@@ -216,6 +242,84 @@ fun DevicesAndSubscriptionsScreen(
             }
         )
     }
+
+    if (suspendResumeTarget != null) {
+        val (target, isSuspend) = suspendResumeTarget!!
+        AlertDialog(
+            onDismissRequest = { suspendResumeTarget = null },
+            title = { Text(if (isSuspend) "Suspend" else "Resume") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "${target.device.vehicleName} • ${target.device.imei}",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 11.sp
+                    )
+                    OutlinedTextField(
+                        value = suspendResumeReason,
+                        onValueChange = { suspendResumeReason = it },
+                        label = { Text("Reason") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("suspend_resume_reason_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (isSuspend) {
+                            onSuspendSubscription(target.device.id, suspendResumeReason)
+                        } else {
+                            onResumeSubscription(target.device.id, suspendResumeReason)
+                        }
+                        suspendResumeTarget = null
+                    },
+                    modifier = Modifier.testTag("confirm_suspend_resume_button")
+                ) {
+                    Text(if (isSuspend) "Suspend" else "Resume")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { suspendResumeTarget = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (pendingSensitiveCommand != null) {
+        val (target, cmdType) = pendingSensitiveCommand!!
+        AlertDialog(
+            onDismissRequest = { pendingSensitiveCommand = null },
+            title = { Text(cmdType.shortLabel) },
+            text = {
+                Text(
+                    text = "${target.device.vehicleName} (${target.device.plateNumber}) • ${target.device.imei}",
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 11.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onSendCommand(target.device.id, cmdType)
+                        pendingSensitiveCommand = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = StatusExpiredCrimson),
+                    modifier = Modifier.testTag("confirm_sensitive_command_button")
+                ) {
+                    Text("Confirm")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingSensitiveCommand = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -223,17 +327,20 @@ private fun DeviceManagementCard(
     aggregate: DeviceAggregate,
     activeRole: UserRole,
     onOpenReassign: () -> Unit,
-    onOpenRenew: () -> Unit
+    onOpenRenew: () -> Unit,
+    onOpenSuspendResume: (Boolean) -> Unit,
+    onTriggerCommand: (TraccarCommandType) -> Unit
 ) {
     val dev = aggregate.device
     val now = System.currentTimeMillis()
     val isActivated = dev.activationStatus == ActivationStatus.ACTIVATED.name
     val isAccessible = aggregate.isSubscriptionAccessible(now)
+    val isSuspended = aggregate.subscription.status == SubscriptionStatus.SUSPENDED.name
     val isExpired = isActivated && !isAccessible
     var showAuditLogs by remember { mutableStateOf(false) }
 
     val statusColor = when {
-        isExpired -> StatusExpiredCrimson
+        isSuspended || isExpired -> StatusExpiredCrimson
         !isActivated -> StatusWaitingAmber
         else -> StatusMovingEmerald
     }
@@ -256,11 +363,20 @@ private fun DeviceManagementCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "${dev.vehicleName} (${dev.plateNumber})",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "${dev.vehicleName} (${dev.plateNumber})",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        StatusPill(
+                            text = dev.vehicleType,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                     if (aggregate.customer != null) {
                         Text(
                             text = aggregate.customer.fullName,
@@ -297,6 +413,46 @@ private fun DeviceManagementCard(
                 }
             }
 
+            if (isActivated && (isAccessible || activeRole == UserRole.ADMIN)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    OutlinedButton(
+                        onClick = { onTriggerCommand(TraccarCommandType.POSITION_SINGLE) },
+                        modifier = Modifier
+                            .heightIn(min = 36.dp)
+                            .testTag("btn_cmd_locate_${dev.id}")
+                    ) {
+                        Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Locate", fontSize = 11.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { onTriggerCommand(TraccarCommandType.ENGINE_STOP) },
+                        modifier = Modifier
+                            .heightIn(min = 36.dp)
+                            .testTag("btn_cmd_stop_${dev.id}")
+                    ) {
+                        Icon(Icons.Default.PowerSettingsNew, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Stop Engine", fontSize = 11.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { onTriggerCommand(TraccarCommandType.ENGINE_RESUME) },
+                        modifier = Modifier
+                            .heightIn(min = 36.dp)
+                            .testTag("btn_cmd_resume_${dev.id}")
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Resume Engine", fontSize = 11.sp)
+                    }
+                }
+            }
+
             if (activeRole == UserRole.ADMIN) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -313,6 +469,20 @@ private fun DeviceManagementCard(
                         Icon(Icons.Default.Autorenew, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("Renew", fontSize = 11.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { onOpenSuspendResume(!isSuspended) },
+                        modifier = Modifier
+                            .heightIn(min = 38.dp)
+                            .testTag("btn_suspend_resume_${dev.id}")
+                    ) {
+                        Icon(
+                            if (isSuspended) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (isSuspended) "Resume" else "Suspend", fontSize = 11.sp)
                     }
                     OutlinedButton(
                         onClick = onOpenReassign,
@@ -332,7 +502,8 @@ private fun DeviceManagementCard(
                     ) {
                         Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Logs (${aggregate.subscriptionHistory.size + aggregate.ownershipHistory.size})", fontSize = 11.sp)
+                        val totalLogs = aggregate.subscriptionHistory.size + aggregate.ownershipHistory.size + aggregate.commands.size
+                        Text("Logs ($totalLogs)", fontSize = 11.sp)
                     }
                 }
             }
@@ -346,6 +517,14 @@ private fun DeviceManagementCard(
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
                         .padding(8.dp)
                 ) {
+                    aggregate.commands.forEach { cmd ->
+                        Text(
+                            text = "CMD ${cmd.commandType} • ${cmd.status}",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                     aggregate.subscriptionHistory.forEach { entry ->
                         Text(
                             text = "${entry.actionType} • ${entry.planDuration}",

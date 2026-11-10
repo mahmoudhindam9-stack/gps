@@ -1,6 +1,7 @@
 package com.example.data.model
 
 import com.example.data.local.ActivationSmsLogEntity
+import com.example.data.local.DeviceCommandEntity
 import com.example.data.local.DeviceEntity
 import com.example.data.local.DeviceOwnershipHistoryEntity
 import com.example.data.local.DeviceProfileEntity
@@ -13,6 +14,47 @@ import kotlin.math.pow
 enum class UserRole(val shortLabel: String) {
     ADMIN("ADMIN"),
     CUSTOMER("CUSTOMER")
+}
+
+enum class VehicleType(val shortLabel: String) {
+    CAR("Car"),
+    MOTORCYCLE("Moto"),
+    TRUCK("Truck"),
+    BUS("Bus"),
+    VAN("Van"),
+    EQUIPMENT("Equip"),
+    OTHER("Other")
+}
+
+enum class VehicleIcon(val key: String, val shortLabel: String) {
+    CAR("car", "Sedan"),
+    SUV("suv", "SUV"),
+    MOTORCYCLE("motorcycle", "Moto"),
+    TRUCK("truck", "Truck"),
+    BUS("bus", "Bus"),
+    VAN("van", "Van"),
+    PICKUP("pickup", "Pickup"),
+    TRACTOR("tractor", "Equip");
+
+    companion object {
+        fun fromKey(key: String?): VehicleIcon {
+            return entries.firstOrNull { it.key.equals(key, ignoreCase = true) } ?: CAR
+        }
+    }
+}
+
+enum class TraccarCommandType(
+    val typeKey: String,
+    val shortLabel: String,
+    val isSensitive: Boolean
+) {
+    POSITION_SINGLE("positionSingle", "Locate", false),
+    ENGINE_STOP("engineStop", "Stop Engine", true),
+    ENGINE_RESUME("engineResume", "Resume Engine", true),
+    OUTPUT_CONTROL("outputControl", "Relay", true),
+    REBOOT_DEVICE("rebootDevice", "Reboot", true),
+    SET_TIMEZONE("setTimezone", "Timezone", false),
+    CUSTOM("custom", "Custom", true)
 }
 
 enum class ActivationStatus(val shortLabel: String, val stepIndex: Int) {
@@ -74,7 +116,7 @@ data class AuthenticatedSession(
     val token: String,
     val userId: String,
     val username: String? = null,
-    val email: String,
+    val email: String = "",
     val fullName: String,
     val role: UserRole,
     val mustChangePassword: Boolean = false
@@ -87,7 +129,8 @@ data class DeviceAggregate(
     val subscription: SubscriptionEntity,
     val smsLogs: List<ActivationSmsLogEntity>,
     val subscriptionHistory: List<SubscriptionHistoryEntity>,
-    val ownershipHistory: List<DeviceOwnershipHistoryEntity>
+    val ownershipHistory: List<DeviceOwnershipHistoryEntity>,
+    val commands: List<DeviceCommandEntity> = emptyList()
 ) {
     fun isSubscriptionAccessible(serverNowMillis: Long = System.currentTimeMillis()): Boolean {
         if (subscription.status != SubscriptionStatus.ACTIVE.name) return false
@@ -173,6 +216,22 @@ object SimAndImeiValidator {
         )
     }
 
+    /**
+     * Normalizes an Egyptian user phone number accepting either local (010...) or E.164 (+2010...).
+     */
+    fun normalizeEgyptianPhone(rawInput: String): NormalizedEgyptianSim {
+        val cleaned = rawInput.trim().replace(" ", "").replace("-", "")
+        if (cleaned.isEmpty()) {
+            return NormalizedEgyptianSim(false, "", "", "Phone required")
+        }
+        val withoutCountryCode = when {
+            cleaned.startsWith("+20") -> cleaned.removePrefix("+20")
+            cleaned.startsWith("0020") -> cleaned.removePrefix("0020")
+            else -> cleaned
+        }
+        return normalizeEgyptianSim(withoutCountryCode)
+    }
+
     fun isValidImei(imei: String): Boolean {
         val clean = imei.trim()
         if (clean.length != 15 || !clean.all { it.isDigit() }) return false
@@ -191,7 +250,43 @@ object SimAndImeiValidator {
         }
         return (10 - (sum % 10)) % 10
     }
+
+    fun compareSemver(versionA: String, versionB: String): Int {
+        fun parse(v: String): List<Int> {
+            return v.trim()
+                .removePrefix("v")
+                .removePrefix("V")
+                .substringBefore("-")
+                .split(".")
+                .map { it.toIntOrNull() ?: 0 }
+        }
+        val a = parse(versionA)
+        val b = parse(versionB)
+        for (i in 0..2) {
+            val ai = a.getOrElse(i) { 0 }
+            val bi = b.getOrElse(i) { 0 }
+            if (ai > bi) return 1
+            if (ai < bi) return -1
+        }
+        return 0
+    }
 }
+
+data class GitHubReleaseState(
+    val repository: String = "mahmoudhindam9-stack/gps",
+    val currentVersion: String = "1.1.0",
+    val latestVersion: String = "1.1.0",
+    val tagName: String = "v1.1.0",
+    val releaseName: String = "VeloTrack GPS v1.1.0",
+    val htmlUrl: String = "https://github.com/mahmoudhindam9-stack/gps/releases",
+    val apkDownloadUrl: String? = null,
+    val releaseNotes: String = "",
+    val publishedAt: String? = null,
+    val updateAvailable: Boolean = false,
+    val autoUpdateEnabled: Boolean = true,
+    val isChecking: Boolean = false,
+    val lastCheckedAtMs: Long? = null
+)
 
 object ReconnectPolicy {
     private const val BASE_DELAY_MS = 1_000L

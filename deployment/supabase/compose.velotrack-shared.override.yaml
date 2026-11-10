@@ -1,5 +1,5 @@
 # Docker Compose override for an existing official self-hosted Supabase stack on the VPS.
-# Usage on VPS inside your existing Supabase docker directory:
+# Usage:
 #   docker compose -f docker-compose.yml -f /path/to/gps/deployment/supabase/compose.velotrack-shared.override.yaml up -d
 
 services:
@@ -12,6 +12,9 @@ services:
           - supabase-db
 
   auth:
+    environment:
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "true"
+      GOTRUE_SMS_AUTOCONFIRM: "true"
     networks:
       default:
       velotrack-shared:

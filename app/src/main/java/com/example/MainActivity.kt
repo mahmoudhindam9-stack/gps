@@ -101,6 +101,7 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
     val serverStatus by viewModel.serverStatus.collectAsStateWithLifecycle()
+    val releaseState by viewModel.releaseState.collectAsStateWithLifecycle()
     val serverUrlInput by viewModel.serverUrlInput.collectAsStateWithLifecycle()
     val fleetFilter by viewModel.fleetFilter.collectAsStateWithLifecycle()
     val selectedDeviceId by viewModel.selectedDeviceId.collectAsStateWithLifecycle()
@@ -244,6 +245,7 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
                             allDevices = visibleDevices,
                             onUpdateForm = { viewModel.updateActivationForm(it) },
                             onSubmitActivation = { viewModel.submitDeviceActivation() },
+                            onSendActivationSms = { devId -> viewModel.sendActivationSms(devId) },
                             onAdminOverride = { devId, reason ->
                                 viewModel.triggerAdminOverride(devId, reason)
                             }
@@ -258,15 +260,27 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
                             },
                             onRenewSubscription = { devId, plan ->
                                 viewModel.renewDeviceSubscription(devId, plan)
+                            },
+                            onSuspendSubscription = { devId, reason ->
+                                viewModel.suspendDeviceSubscription(devId, reason)
+                            },
+                            onResumeSubscription = { devId, reason ->
+                                viewModel.resumeDeviceSubscription(devId, reason)
+                            },
+                            onSendCommand = { devId, cmdType ->
+                                viewModel.sendDeviceCommand(devId, cmdType)
                             }
                         )
 
                         AppTab.SERVER -> ServerArchitectureScreen(
                             serverUrlInput = serverUrlInput,
                             serverStatus = serverStatus,
+                            releaseState = releaseState,
                             onUpdateServerUrl = { viewModel.updateServerUrl(it) },
                             onCheckHealth = { viewModel.checkServerHealth() },
-                            onSyncTraccar = { viewModel.syncTraccarOnBackend() }
+                            onSyncTraccar = { viewModel.syncTraccarOnBackend() },
+                            onToggleAutoUpdate = { viewModel.toggleAutoUpdate() },
+                            onCheckGitHubRelease = { viewModel.checkGitHubRelease() }
                         )
                     }
                 }
@@ -326,7 +340,7 @@ private fun VeloTrackLoginScreen(
                 OutlinedTextField(
                     value = identifier,
                     onValueChange = { identifier = it },
-                    label = { Text("Username") },
+                    label = { Text("Username or Phone") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                     singleLine = true,
                     modifier = Modifier

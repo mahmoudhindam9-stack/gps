@@ -1,14 +1,39 @@
 export type Role = "ADMIN" | "CUSTOMER";
 
+export type VehicleType =
+  | "CAR"
+  | "MOTORCYCLE"
+  | "TRUCK"
+  | "BUS"
+  | "VAN"
+  | "EQUIPMENT"
+  | "OTHER";
+
+export type VehicleIcon =
+  | "car"
+  | "suv"
+  | "motorcycle"
+  | "truck"
+  | "bus"
+  | "van"
+  | "pickup"
+  | "tractor";
+
 export interface User {
   id: string;
   username?: string | null;
-  email: string;
-  phone?: string;
+  email?: string | null;
+  phone?: string | null;
   fullName: string;
   role: Role | string;
   mustChangePassword: boolean;
   isActive: boolean;
+  deletedAtMs?: number | null;
+  vehicleCount?: number;
+  activeSubscriptionCount?: number;
+  pendingSubscriptionCount?: number;
+  expiredSubscriptionCount?: number;
+  suspendedSubscriptionCount?: number;
   createdAtMs: number;
 }
 
@@ -33,13 +58,17 @@ export interface Subscription {
 export interface Device {
   id: string;
   imei: string;
+  serialNumber?: string | null;
   traccarDeviceId: number;
   profileId: string;
   currentCustomerId: string;
   vehicleName: string;
+  vehicleType?: VehicleType | string;
+  vehicleIcon?: VehicleIcon | string;
   plateNumber: string;
-  simLocalNumber: string;
-  simE164Number: string;
+  simNumber?: string;
+  simLocalNumber?: string;
+  simE164Number?: string;
   activationStatus: string;
   connectionState: string;
   hasValidFix: boolean;
@@ -69,6 +98,7 @@ export interface DeviceProfile {
   serverCommandTemplate: string;
   gprsonCommandTemplate?: string | null;
   expectedReplyPattern?: string | null;
+  supportedCommands?: string[];
   isVerified: boolean;
   createdAtMs: number;
 }
@@ -78,9 +108,34 @@ export interface SmsLog {
   commandKey: string;
   commandText: string;
   status: string;
+  idempotencyKey?: string | null;
   deviceReply?: string | null;
   failureReason?: string | null;
   sentAtMs: number;
+}
+
+export interface DeviceCommandType {
+  type: string;
+  labelAr: string;
+  labelEn: string;
+  sensitive: boolean;
+  requiresConfirmation: boolean;
+  customerPermitted: boolean;
+  parameters: string[];
+}
+
+export interface DeviceCommandLog {
+  id: string;
+  deviceId: string;
+  issuedByUserId: string;
+  issuedByRole: string;
+  commandType: string;
+  parameters: Record<string, unknown>;
+  status: string;
+  traccarCommandId: number | null;
+  responseText: string | null;
+  failureReason: string | null;
+  createdAtMs: number;
 }
 
 export interface RoutePoint {
@@ -103,10 +158,27 @@ export interface DeviceBundle {
   smsLogs: SmsLog[];
   subscriptionHistory: Array<Record<string, unknown>>;
   ownershipHistory: Array<Record<string, unknown>>;
+  commandHistory?: DeviceCommandLog[];
+  supportedCommands?: DeviceCommandType[];
+}
+
+export interface CustomerDetails {
+  customer: User;
+  summary: {
+    totalVehicles: number;
+    totalSubscriptions: number;
+    activeSubscriptionsCount: number;
+    pendingSubscriptionsCount: number;
+    expiredSubscriptionsCount: number;
+    suspendedSubscriptionsCount: number;
+  };
+  vehicles: DeviceBundle[];
 }
 
 export interface Health {
   status: string;
+  version?: string;
+  repository?: string;
   supabaseConnected: boolean;
   traccarConnected: boolean;
   traccarWsConnected: boolean;
@@ -115,4 +187,31 @@ export interface Health {
   databaseError?: string | null;
 }
 
-export type Page = "overview" | "live" | "devices" | "subscriptions" | "customers" | "profiles" | "reports" | "system";
+export interface GitHubReleaseInfo {
+  currentVersion: string;
+  repository: string;
+  latestVersion: string;
+  tagName: string;
+  releaseName: string;
+  publishedAt: string | null;
+  htmlUrl: string;
+  apkDownloadUrl: string | null;
+  webBundleDownloadUrl: string | null;
+  releaseNotes: string;
+  updateAvailable: boolean;
+  autoUpdateEnabled: boolean;
+  checkedAtMs: number;
+  status: "UP_TO_DATE" | "UPDATE_AVAILABLE" | "OFFLINE";
+}
+
+export type Page =
+  | "overview"
+  | "live"
+  | "devices"
+  | "subscriptions"
+  | "customers"
+  | "customer_details"
+  | "profiles"
+  | "reports"
+  | "system";
+

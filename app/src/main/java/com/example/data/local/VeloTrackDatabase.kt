@@ -14,9 +14,10 @@ import androidx.room.RoomDatabase
         SubscriptionEntity::class,
         SubscriptionHistoryEntity::class,
         DeviceOwnershipHistoryEntity::class,
+        DeviceCommandEntity::class,
         CachedWaypointEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class VeloTrackDatabase : RoomDatabase() {
