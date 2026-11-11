@@ -5,6 +5,7 @@ on:
     branches: ["**"]
     paths:
       - "backend/**"
+      - "deployment/**"
       - ".github/workflows/backend-test.yml"
   pull_request:
     paths:
@@ -30,6 +31,8 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: backend/package-lock.json
+      - name: Verify Traccar 6.17.0 protocol inventory and ingress mappings
+        run: node ../deployment/traccar/verify-protocol-ports.mjs
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
       - name: Run backend tests
