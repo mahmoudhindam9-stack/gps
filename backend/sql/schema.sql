@@ -477,17 +477,15 @@ CREATE TABLE IF NOT EXISTS public.schema_migrations (
 );
 
 ALTER TABLE public.schema_migrations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.schema_migrations FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS rls_schema_migrations_admin_select ON public.schema_migrations;
-CREATE POLICY rls_schema_migrations_admin_select ON public.schema_migrations
-    FOR SELECT
-    USING (public.request_user_role() = 'ADMIN');
+DROP POLICY IF EXISTS rls_schema_migrations_admin_all ON public.schema_migrations;
+CREATE POLICY rls_schema_migrations_admin_all ON public.schema_migrations
+    FOR ALL
+    USING (public.request_user_role() = 'ADMIN')
+    WITH CHECK (public.request_user_role() = 'ADMIN');
 
 GRANT SELECT, INSERT, UPDATE ON TABLE public.schema_migrations TO authenticated, service_role;
 
-INSERT INTO public.schema_migrations (version, description) VALUES
-    ('001_initial_supabase_schema', 'Initial Supabase PostgreSQL schema, Auth FKs, and tenant RLS'),
-    ('002_user_vehicle_commands_rls', 'Extended user management, vehicle types/icons, and device commands audit'),
-    ('003_customer_device_guard_and_fleet_ops', 'Customer device protected-field guard trigger and Fleet Intelligence modules')
-ON CONFLICT (version) DO NOTHING;
 

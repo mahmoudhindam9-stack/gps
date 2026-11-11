@@ -280,12 +280,12 @@ data class CheckUpdateRequestDto(
 )
 
 data class ServerSystemVersionDto(
-    val currentVersion: String = "1.2.0",
-    val schemaVersion: String = "003_customer_device_guard_and_fleet_ops",
+    val currentVersion: String = "1.3.0",
+    val schemaVersion: String = "003_customer_device_guard_and_schema_migrations",
     val repository: String = "mahmoudhindam9-stack/gps",
-    val latestVersion: String = "1.2.0",
-    val tagName: String = "v1.2.0",
-    val releaseName: String = "VeloTrack GPS v1.2.0",
+    val latestVersion: String = "1.3.0",
+    val tagName: String = "v1.3.0",
+    val releaseName: String = "VeloTrack GPS v1.3.0",
     val publishedAt: String? = null,
     val htmlUrl: String = "https://github.com/mahmoudhindam9-stack/gps/releases",
     val apkDownloadUrl: String? = null,
@@ -305,7 +305,7 @@ data class ServerFleetEventDto(
     val deviceId: String,
     val vehicleName: String,
     val plateNumber: String = "",
-    val traccarDeviceId: Long,
+    val traccarDeviceId: Long = 0L,
     val positionId: Long? = null,
     val geofenceId: Long? = null,
     val attributes: Map<String, Any?> = emptyMap()
@@ -315,11 +315,11 @@ data class ServerMileageSummaryDto(
     val deviceId: String,
     val vehicleName: String,
     val plateNumber: String = "",
-    val traccarDeviceId: Long,
-    val distanceMeters: Double = 0.0,
-    val distanceKm: Double = 0.0,
-    val averageSpeedKmh: Double = 0.0,
-    val maxSpeedKmh: Double = 0.0,
+    val traccarDeviceId: Long = 0L,
+    val distanceMeters: Double? = null,
+    val distanceKm: Double? = null,
+    val averageSpeedKmh: Double? = null,
+    val maxSpeedKmh: Double? = null,
     val spentFuelLiters: Double? = null,
     val engineHours: Double? = null
 )
@@ -328,7 +328,7 @@ data class ServerFleetTelemetryDto(
     val deviceId: String,
     val vehicleName: String,
     val plateNumber: String = "",
-    val traccarDeviceId: Long,
+    val traccarDeviceId: Long = 0L,
     val connectionState: String = "OFFLINE",
     val hasValidFix: Boolean = false,
     val reportedAtMs: Long? = null,
@@ -364,10 +364,10 @@ data class CreateDeviceShareRequestDto(
 data class ServerDeviceShareResponseDto(
     val deviceId: String,
     val vehicleName: String,
-    val token: String,
+    val token: String = "",
     val shareUrl: String,
     val expiresAt: String,
-    val expiresAtMs: Long
+    val expiresAtMs: Long? = null
 )
 
 data class TraccarSyncResponseDto(

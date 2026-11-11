@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.Button
@@ -70,6 +71,7 @@ import com.example.ui.AppTab
 import com.example.ui.VeloTrackViewModel
 import com.example.ui.screens.AdminDeviceActivationScreen
 import com.example.ui.screens.DevicesAndSubscriptionsScreen
+import com.example.ui.screens.FleetIntelligenceScreen
 import com.example.ui.screens.LiveFleetMapScreen
 import com.example.ui.screens.ServerArchitectureScreen
 import com.example.ui.screens.StatusPill
@@ -111,6 +113,7 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
     val deviceProfiles by viewModel.deviceProfiles.collectAsStateWithLifecycle()
     val activationForm by viewModel.activationForm.collectAsStateWithLifecycle()
     val routePlayback by viewModel.routePlayback.collectAsStateWithLifecycle()
+    val fleetIntelligence by viewModel.fleetIntelligence.collectAsStateWithLifecycle()
     val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
 
     if (session != null && session?.mustChangePassword == false && currentTab != AppTab.MAP) {
@@ -121,9 +124,9 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
 
     val activeRole = session?.role ?: UserRole.CUSTOMER
     val availableTabs = if (activeRole == UserRole.ADMIN) {
-        listOf(AppTab.MAP, AppTab.ACTIVATE, AppTab.DEVICES, AppTab.SERVER)
+        listOf(AppTab.MAP, AppTab.ACTIVATE, AppTab.DEVICES, AppTab.FLEET, AppTab.SERVER)
     } else {
-        listOf(AppTab.MAP, AppTab.DEVICES)
+        listOf(AppTab.MAP, AppTab.DEVICES, AppTab.FLEET)
     }
 
     Scaffold(
@@ -149,6 +152,7 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
                             AppTab.MAP -> Icons.Default.Map
                             AppTab.ACTIVATE -> Icons.Default.Sms
                             AppTab.DEVICES -> Icons.Default.Devices
+                            AppTab.FLEET -> Icons.Default.Radar
                             AppTab.SERVER -> Icons.Default.Dns
                         }
                         NavigationBarItem(
@@ -269,6 +273,26 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
                             },
                             onSendCommand = { devId, cmdType ->
                                 viewModel.sendDeviceCommand(devId, cmdType)
+                            }
+                        )
+
+                        AppTab.FLEET -> FleetIntelligenceScreen(
+                            devices = visibleDevices,
+                            activeRole = activeRole,
+                            uiState = fleetIntelligence,
+                            isDarkTheme = isDarkTheme,
+                            onSelectSubTab = { viewModel.selectFleetSubTab(it) },
+                            onSelectDeviceFilter = { viewModel.setFleetIntelligenceDeviceFilter(it) },
+                            onSelectPeriod = { viewModel.setFleetIntelligencePeriod(it) },
+                            onSelectEventTypeFilter = { viewModel.setFleetIntelligenceEventType(it) },
+                            onToggleLanguage = { viewModel.toggleFleetLanguage() },
+                            onRefreshActiveSection = { viewModel.refreshFleetIntelligence() },
+                            onCreateGeofence = { name, desc, area, devIds ->
+                                viewModel.createFleetGeofence(name, desc, area, devIds)
+                            },
+                            onDeleteGeofence = { id -> viewModel.deleteFleetGeofence(id) },
+                            onCreateShareLink = { devId, hrs ->
+                                viewModel.createFleetShareLink(devId, hrs)
                             }
                         )
 

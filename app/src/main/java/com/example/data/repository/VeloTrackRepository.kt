@@ -901,6 +901,16 @@ class VeloTrackRepository(
         }
     }
 
+    private fun extractApiError(code: Int, rawErrorBody: String?, fallbackPrefix: String): String {
+        if (!rawErrorBody.isNullOrBlank()) {
+            val match = Regex("\"error\"\\s*:\\s*\"([^\"]+)\"").find(rawErrorBody)
+            if (match != null && match.groupValues[1].isNotBlank()) {
+                return match.groupValues[1]
+            }
+        }
+        return "$fallbackPrefix (HTTP $code)"
+    }
+
     suspend fun fetchFleetEvents(
         fromMillis: Long,
         toMillis: Long,
@@ -911,7 +921,9 @@ class VeloTrackRepository(
         return runCatching {
             val res = apiProvider().getFleetEvents(fromIso, toIso, deviceId)
             if (!res.isSuccessful || res.body() == null) {
-                throw IllegalStateException("Events query failed (HTTP ${res.code()})")
+                throw IllegalStateException(
+                    extractApiError(res.code(), res.errorBody()?.string(), "Events query failed")
+                )
             }
             res.body()!!
         }
@@ -927,7 +939,9 @@ class VeloTrackRepository(
         return runCatching {
             val res = apiProvider().getMileageSummary(fromIso, toIso, deviceId)
             if (!res.isSuccessful || res.body() == null) {
-                throw IllegalStateException("Mileage summary failed (HTTP ${res.code()})")
+                throw IllegalStateException(
+                    extractApiError(res.code(), res.errorBody()?.string(), "Mileage summary failed")
+                )
             }
             res.body()!!
         }
@@ -939,7 +953,9 @@ class VeloTrackRepository(
         return runCatching {
             val res = apiProvider().getFleetTelemetry(deviceId)
             if (!res.isSuccessful || res.body() == null) {
-                throw IllegalStateException("Telemetry query failed (HTTP ${res.code()})")
+                throw IllegalStateException(
+                    extractApiError(res.code(), res.errorBody()?.string(), "Telemetry query failed")
+                )
             }
             res.body()!!
         }
@@ -949,7 +965,9 @@ class VeloTrackRepository(
         return runCatching {
             val res = apiProvider().getGeofences()
             if (!res.isSuccessful || res.body() == null) {
-                throw IllegalStateException("Geofences query failed (HTTP ${res.code()})")
+                throw IllegalStateException(
+                    extractApiError(res.code(), res.errorBody()?.string(), "Geofences query failed")
+                )
             }
             res.body()!!
         }
@@ -971,7 +989,9 @@ class VeloTrackRepository(
                 )
             )
             if (!res.isSuccessful || res.body() == null) {
-                throw IllegalStateException("Create geofence failed (HTTP ${res.code()})")
+                throw IllegalStateException(
+                    extractApiError(res.code(), res.errorBody()?.string(), "Create geofence failed")
+                )
             }
             res.body()!!
         }
@@ -981,7 +1001,9 @@ class VeloTrackRepository(
         return runCatching {
             val res = apiProvider().deleteGeofence(geofenceId)
             if (!res.isSuccessful || res.body() == null) {
-                throw IllegalStateException("Delete geofence failed (HTTP ${res.code()})")
+                throw IllegalStateException(
+                    extractApiError(res.code(), res.errorBody()?.string(), "Delete geofence failed")
+                )
             }
             res.body()!!.deleted
         }
@@ -997,7 +1019,9 @@ class VeloTrackRepository(
                 request = CreateDeviceShareRequestDto(expiresInHours = expiresInHours)
             )
             if (!res.isSuccessful || res.body() == null) {
-                throw IllegalStateException("Create share link failed (HTTP ${res.code()})")
+                throw IllegalStateException(
+                    extractApiError(res.code(), res.errorBody()?.string(), "Create share link failed")
+                )
             }
             res.body()!!
         }

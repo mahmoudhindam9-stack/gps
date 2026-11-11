@@ -235,5 +235,220 @@ class ExampleRobolectricTest {
 
         db.close()
     }
+
+    @Test
+    fun roomDatabaseMigrations_1To4_preserveAllExistingUsersDevicesSubscriptionsSmsLogsAndWaypoints() = kotlinx.coroutines.test.runTest {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val dbName = "velotrack_migration_test_${System.currentTimeMillis()}.db"
+        val dbFile = context.getDatabasePath(dbName)
+        dbFile.parentFile?.mkdirs()
+        if (dbFile.exists()) dbFile.delete()
+
+        // 1. Create a v1 SQLite database with legacy columns and pre-existing user/device/SMS/subscription/waypoint records
+        val rawDb = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(dbFile, null)
+        rawDb.version = 1
+        rawDb.execSQL(
+            """
+            CREATE TABLE `users_profile` (
+                `id` TEXT NOT NULL,
+                `phone` TEXT NOT NULL,
+                `fullName` TEXT NOT NULL,
+                `role` TEXT NOT NULL,
+                `createdAt` INTEGER NOT NULL,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+        rawDb.execSQL(
+            """
+            CREATE TABLE `device_profiles` (
+                `id` TEXT NOT NULL,
+                `manufacturer` TEXT NOT NULL,
+                `model` TEXT NOT NULL,
+                `firmwareVersion` TEXT NOT NULL,
+                `traccarProtocol` TEXT NOT NULL,
+                `serverHost` TEXT NOT NULL,
+                `serverPort` INTEGER NOT NULL,
+                `transport` TEXT NOT NULL,
+                `serverMode` TEXT NOT NULL,
+                `requiresDevicePassword` INTEGER NOT NULL,
+                `defaultDevicePassword` TEXT,
+                `requiresGprsonCommand` INTEGER NOT NULL,
+                `serverCommandTemplate` TEXT NOT NULL,
+                `gprsonCommandTemplate` TEXT,
+                `optionalTimerCommandTemplate` TEXT,
+                `expectedReplyPattern` TEXT,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+        rawDb.execSQL(
+            """
+            CREATE TABLE `devices` (
+                `id` TEXT NOT NULL,
+                `imei` TEXT NOT NULL,
+                `traccarDeviceId` INTEGER NOT NULL,
+                `profileId` TEXT NOT NULL,
+                `currentCustomerId` TEXT NOT NULL,
+                `vehicleName` TEXT NOT NULL,
+                `plateNumber` TEXT NOT NULL,
+                `simLocalNumber` TEXT NOT NULL,
+                `simE164Number` TEXT NOT NULL,
+                `activationStatus` TEXT NOT NULL,
+                `connectionState` TEXT NOT NULL,
+                `hasValidFix` INTEGER NOT NULL,
+                `lastLat` REAL,
+                `lastLng` REAL,
+                `lastSpeedKmh` REAL,
+                `lastHeading` REAL,
+                `ignitionOn` INTEGER,
+                `firstConnectedAt` INTEGER,
+                `lastSeenAt` INTEGER,
+                `createdAt` INTEGER NOT NULL,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+        rawDb.execSQL("CREATE UNIQUE INDEX `index_devices_imei` ON `devices` (`imei`)")
+        rawDb.execSQL("CREATE UNIQUE INDEX `index_devices_traccarDeviceId` ON `devices` (`traccarDeviceId`)")
+        rawDb.execSQL("CREATE INDEX `index_devices_currentCustomerId` ON `devices` (`currentCustomerId`)")
+
+        rawDb.execSQL(
+            """
+            CREATE TABLE `activation_sms_logs` (
+                `id` TEXT NOT NULL,
+                `deviceId` TEXT NOT NULL,
+                `stepOrder` INTEGER NOT NULL,
+                `commandKey` TEXT NOT NULL,
+                `commandText` TEXT NOT NULL,
+                `gatewayMessageId` TEXT,
+                `status` TEXT NOT NULL,
+                `deviceReply` TEXT,
+                `sentAt` INTEGER NOT NULL,
+                `completedAt` INTEGER,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+        rawDb.execSQL("CREATE INDEX `index_activation_sms_logs_deviceId` ON `activation_sms_logs` (`deviceId`)")
+
+        rawDb.execSQL(
+            """
+            CREATE TABLE `subscriptions` (
+                `id` TEXT NOT NULL,
+                `deviceId` TEXT NOT NULL,
+                `customerId` TEXT NOT NULL,
+                `planDuration` TEXT NOT NULL,
+                `status` TEXT NOT NULL,
+                `startedAt` INTEGER,
+                `expiresAt` INTEGER,
+                `adminOverrideBy` TEXT,
+                `adminOverrideReason` TEXT,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+        rawDb.execSQL("CREATE UNIQUE INDEX `index_subscriptions_deviceId` ON `subscriptions` (`deviceId`)")
+        rawDb.execSQL("CREATE INDEX `index_subscriptions_customerId` ON `subscriptions` (`customerId`)")
+
+        rawDb.execSQL(
+            """
+            CREATE TABLE `subscription_history` (
+                `id` TEXT NOT NULL,
+                `deviceId` TEXT NOT NULL,
+                `customerId` TEXT NOT NULL,
+                `actionType` TEXT NOT NULL,
+                `planDuration` TEXT NOT NULL,
+                `notes` TEXT NOT NULL,
+                `createdAt` INTEGER NOT NULL,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+        rawDb.execSQL("CREATE INDEX `index_subscription_history_deviceId` ON `subscription_history` (`deviceId`)")
+
+        rawDb.execSQL(
+            """
+            CREATE TABLE `device_ownership_history` (
+                `id` TEXT NOT NULL,
+                `deviceId` TEXT NOT NULL,
+                `previousCustomerId` TEXT,
+                `previousCustomerName` TEXT,
+                `newCustomerId` TEXT NOT NULL,
+                `newCustomerName` TEXT NOT NULL,
+                `reassignedByAdminId` TEXT NOT NULL,
+                `reason` TEXT NOT NULL,
+                `reassignedAt` INTEGER NOT NULL,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+        rawDb.execSQL("CREATE INDEX `index_device_ownership_history_deviceId` ON `device_ownership_history` (`deviceId`)")
+
+        rawDb.execSQL(
+            """
+            CREATE TABLE `cached_waypoints` (
+                `id` INTEGER NOT NULL,
+                `deviceId` TEXT NOT NULL,
+                `latitude` REAL NOT NULL,
+                `longitude` REAL NOT NULL,
+                `speedKmh` REAL NOT NULL,
+                `heading` REAL NOT NULL,
+                `ignition` INTEGER NOT NULL,
+                `valid` INTEGER NOT NULL,
+                `recordedAt` INTEGER NOT NULL,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+        rawDb.execSQL("CREATE INDEX `index_cached_waypoints_deviceId_recordedAt` ON `cached_waypoints` (`deviceId`, `recordedAt`)")
+
+        // Insert existing v1 records
+        rawDb.execSQL("INSERT INTO `users_profile` VALUES ('u-v1', '+201099988877', 'Legacy Customer', 'CUSTOMER', 1700000000000)")
+        rawDb.execSQL("INSERT INTO `device_profiles` VALUES ('p-v1', 'Concox', 'GT06N', 'V1.0', 'gt06', 'gps.velotrack.org', 5023, 'TCP', 'DOMAIN', 0, NULL, 0, 'SERVER,1,{HOST},{PORT},0#', NULL, NULL, 'OK')")
+        rawDb.execSQL("INSERT INTO `devices` VALUES ('d-v1', '358739051122332', 501, 'p-v1', 'u-v1', 'Legacy Sedan', 'LEG-001', '01099988877', '+201099988877', 'ACTIVATED', 'ONLINE_GPS_FIX', 1, 30.05, 31.24, 55.0, 180.0, 1, 1700000000000, 1700000050000, 1700000000000)")
+        rawDb.execSQL("INSERT INTO `activation_sms_logs` VALUES ('sms-v1', 'd-v1', 1, 'SERVER', 'SERVER,1,gps.velotrack.org,5023,0#', 'gw-v1', 'REPLIED', 'OK', 1700000000000, 1700000010000)")
+        rawDb.execSQL("INSERT INTO `subscriptions` VALUES ('sub-v1', 'd-v1', 'u-v1', 'MONTH_12', 'ACTIVE', 1700000000000, 1731536000000, NULL, NULL)")
+        rawDb.execSQL("INSERT INTO `cached_waypoints` VALUES (9001, 'd-v1', 30.05, 31.24, 55.0, 180.0, 1, 1, 1700000050000)")
+        rawDb.close()
+
+        // 2. Open with Room v4 and ALL_MIGRATIONS (NO destructive fallback)
+        val migratedDb = androidx.room.Room.databaseBuilder(
+            context,
+            com.example.data.local.VeloTrackDatabase::class.java,
+            dbName
+        )
+            .addMigrations(*com.example.data.local.VeloTrackDatabase.ALL_MIGRATIONS)
+            .allowMainThreadQueries()
+            .build()
+
+        val dao = migratedDb.veloTrackDao()
+        val users = dao.getAllUsersOnce()
+        val devices = dao.getAllDevicesOnce()
+        val smsLogs = dao.getAllSmsLogsOnce()
+        val subs = dao.getAllSubscriptionsOnce()
+        val waypoints = dao.getWaypointsForDevice("d-v1")
+
+        assertEquals(1, users.size)
+        assertEquals("Legacy Customer", users.first().fullName)
+        assertTrue(users.first().isActive)
+
+        assertEquals(1, devices.size)
+        assertEquals("Legacy Sedan", devices.first().vehicleName)
+        assertEquals("CAR", devices.first().vehicleType)
+        assertEquals("car", devices.first().vehicleIcon)
+
+        assertEquals(1, smsLogs.size)
+        assertEquals("OK", smsLogs.first().deviceReply)
+
+        assertEquals(1, subs.size)
+        assertEquals("MONTH_12", subs.first().planDuration)
+
+        assertEquals(1, waypoints.size)
+        assertEquals(9001L, waypoints.first().id)
+
+        migratedDb.close()
+        dbFile.delete()
+    }
 }
 

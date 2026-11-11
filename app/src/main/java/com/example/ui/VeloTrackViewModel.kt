@@ -17,6 +17,11 @@ import com.example.data.model.TraccarCommandType
 import com.example.data.model.UserRole
 import com.example.data.model.VehicleIcon
 import com.example.data.model.VehicleType
+import com.example.data.network.ServerDeviceShareResponseDto
+import com.example.data.network.ServerFleetEventDto
+import com.example.data.network.ServerFleetTelemetryDto
+import com.example.data.network.ServerGeofenceDto
+import com.example.data.network.ServerMileageSummaryDto
 import com.example.data.network.VeloTrackNetworkClient
 import com.example.data.repository.ServerStatusSnapshot
 import com.example.data.repository.VeloTrackRepository
@@ -32,8 +37,43 @@ enum class AppTab(val shortLabel: String) {
     MAP("Map"),
     ACTIVATE("Activate"),
     DEVICES("Devices"),
+    FLEET("Fleet"),
     SERVER("Server")
 }
+
+enum class FleetSubTab {
+    EVENTS,
+    GEOFENCES,
+    TELEMETRY,
+    REPORTS,
+    SHARE
+}
+
+enum class FleetPeriodPreset(
+    val hours: Long,
+    val labelEn: String,
+    val labelAr: String
+) {
+    HOURS_24(24L, "24H", "24 ساعة"),
+    DAYS_7(24L * 7L, "7D", "7 أيام"),
+    DAYS_30(24L * 30L, "30D", "30 يوم"),
+    DAYS_90(24L * 90L, "90D", "90 يوم")
+}
+
+data class FleetIntelligenceUiState(
+    val activeSubTab: FleetSubTab = FleetSubTab.EVENTS,
+    val selectedDeviceId: String? = null,
+    val selectedPeriod: FleetPeriodPreset = FleetPeriodPreset.HOURS_24,
+    val selectedEventType: String = "ALL",
+    val isArabic: Boolean = false,
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null,
+    val events: List<ServerFleetEventDto> = emptyList(),
+    val geofences: List<ServerGeofenceDto> = emptyList(),
+    val telemetry: List<ServerFleetTelemetryDto> = emptyList(),
+    val mileageReports: List<ServerMileageSummaryDto> = emptyList(),
+    val latestShareLink: ServerDeviceShareResponseDto? = null
+)
 
 enum class FleetFilter(val shortLabel: String) {
     ALL("All"),
@@ -85,6 +125,9 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _routePlayback = MutableStateFlow<RoutePlaybackState?>(null)
     val routePlayback: StateFlow<RoutePlaybackState?> = _routePlayback.asStateFlow()
+
+    private val _fleetIntelligence = MutableStateFlow(FleetIntelligenceUiState())
+    val fleetIntelligence: StateFlow<FleetIntelligenceUiState> = _fleetIntelligence.asStateFlow()
 
     private val _statusBanner = MutableStateFlow<String?>(null)
     val statusBanner: StateFlow<String?> = _statusBanner.asStateFlow()
@@ -146,6 +189,9 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         _currentTab.value = tab
+        if (tab == AppTab.FLEET) {
+            refreshFleetIntelligence()
+        }
     }
 
     fun setFleetFilter(filter: FleetFilter) {
@@ -420,6 +466,184 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun closeRoutePlayback() {
         _routePlayback.value = null
+    }
+
+    fun selectFleetSubTab(subTab: FleetSubTab) {
+        _fleetIntelligence.value = _fleetIntelligence.value.copy(
+            activeSubTab = subTab,
+            errorMessage = null
+        )
+        refreshFleetIntelligence()
+    }
+
+    fun setFleetIntelligenceDeviceFilter(deviceId: String?) {
+        _fleetIntelligence.value = _fleetIntelligence.value.copy(
+            selectedDeviceId = deviceId,
+            errorMessage = null
+        )
+        refreshFleetIntelligence()
+    }
+
+    fun setFleetIntelligencePeriod(period: FleetPeriodPreset) {
+        _fleetIntelligence.value = _fleetIntelligence.value.copy(
+            selectedPeriod = period,
+            errorMessage = null
+        )
+        refreshFleetIntelligence()
+    }
+
+    fun setFleetIntelligenceEventType(eventType: String) {
+        _fleetIntelligence.value = _fleetIntelligence.value.copy(selectedEventType = eventType)
+    }
+
+    fun toggleFleetLanguage() {
+        _fleetIntelligence.value = _fleetIntelligence.value.copy(
+            isArabic = !_fleetIntelligence.value.isArabic
+        )
+    }
+
+    fun refreshFleetIntelligence() {
+        val current = _fleetIntelligence.value
+        val toMs = System.currentTimeMillis()
+        val fromMs = toMs - (current.selectedPeriod.hours * 3_600_000L)
+
+        viewModelScope.launch {
+            _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                isLoading = true,
+                errorMessage = null
+            )
+            when (current.activeSubTab) {
+                FleetSubTab.EVENTS -> {
+                    val res = repository.fetchFleetEvents(fromMs, toMs, current.selectedDeviceId)
+                    res.onSuccess { list ->
+                        _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                            isLoading = false,
+                            events = list
+                        )
+                    }.onFailure { err ->
+                        _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                            isLoading = false,
+                            errorMessage = err.message ?: "Events failed"
+                        )
+                    }
+                }
+
+                FleetSubTab.GEOFENCES -> {
+                    val res = repository.fetchGeofences()
+                    res.onSuccess { list ->
+                        _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                            isLoading = false,
+                            geofences = list
+                        )
+                    }.onFailure { err ->
+                        _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                            isLoading = false,
+                            errorMessage = err.message ?: "Geofences failed"
+                        )
+                    }
+                }
+
+                FleetSubTab.TELEMETRY -> {
+                    val res = repository.fetchFleetTelemetry(current.selectedDeviceId)
+                    res.onSuccess { list ->
+                        _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                            isLoading = false,
+                            telemetry = list
+                        )
+                    }.onFailure { err ->
+                        _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                            isLoading = false,
+                            errorMessage = err.message ?: "Telemetry failed"
+                        )
+                    }
+                }
+
+                FleetSubTab.REPORTS -> {
+                    val res = repository.fetchMileageSummary(fromMs, toMs, current.selectedDeviceId)
+                    res.onSuccess { list ->
+                        _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                            isLoading = false,
+                            mileageReports = list
+                        )
+                    }.onFailure { err ->
+                        _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                            isLoading = false,
+                            errorMessage = err.message ?: "Reports failed"
+                        )
+                    }
+                }
+
+                FleetSubTab.SHARE -> {
+                    _fleetIntelligence.value = _fleetIntelligence.value.copy(isLoading = false)
+                }
+            }
+        }
+    }
+
+    fun createFleetGeofence(
+        name: String,
+        description: String,
+        area: String,
+        deviceIds: List<String>
+    ) {
+        viewModelScope.launch {
+            _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                isLoading = true,
+                errorMessage = null
+            )
+            val res = repository.createGeofence(name, description, area, deviceIds)
+            res.onSuccess {
+                showBanner("Geofence saved")
+                refreshFleetIntelligence()
+            }.onFailure { err ->
+                _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                    isLoading = false,
+                    errorMessage = err.message ?: "Create geofence failed"
+                )
+            }
+        }
+    }
+
+    fun deleteFleetGeofence(geofenceId: Long) {
+        viewModelScope.launch {
+            _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                isLoading = true,
+                errorMessage = null
+            )
+            val res = repository.deleteGeofence(geofenceId)
+            res.onSuccess {
+                showBanner("Geofence deleted")
+                refreshFleetIntelligence()
+            }.onFailure { err ->
+                _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                    isLoading = false,
+                    errorMessage = err.message ?: "Delete geofence failed"
+                )
+            }
+        }
+    }
+
+    fun createFleetShareLink(deviceId: String, expiresInHours: Int) {
+        viewModelScope.launch {
+            _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                isLoading = true,
+                errorMessage = null
+            )
+            val res = repository.createDeviceShareLink(deviceId, expiresInHours)
+            res.onSuccess { share ->
+                _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                    isLoading = false,
+                    latestShareLink = share,
+                    errorMessage = null
+                )
+                showBanner("Share link ready")
+            }.onFailure { err ->
+                _fleetIntelligence.value = _fleetIntelligence.value.copy(
+                    isLoading = false,
+                    errorMessage = err.message ?: "Create share link failed"
+                )
+            }
+        }
     }
 
     fun clearBanner() {

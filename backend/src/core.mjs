@@ -237,8 +237,8 @@ export function verifyPassword(password, storedHash) {
   return crypto.timingSafeEqual(derived, keyBuf);
 }
 
-export const VELOTRACK_APP_VERSION = "1.2.0";
-export const VELOTRACK_SCHEMA_VERSION = "003_customer_device_guard_and_fleet_ops";
+export const VELOTRACK_APP_VERSION = "1.3.0";
+export const VELOTRACK_SCHEMA_VERSION = "003_customer_device_guard_and_schema_migrations";
 export const DEFAULT_GITHUB_REPO = "mahmoudhindam9-stack/gps";
 
 export function normalizeSemver(versionStr) {
@@ -414,11 +414,27 @@ export class SupabaseDatabaseAdapter {
   }
 
   async applySchemaMigration(customSchemaPath = null) {
-    const defaultPath = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      "../sql/schema.sql"
-    );
-    const sqlText = fs.readFileSync(customSchemaPath ?? defaultPath, "utf8");
+    const baseSqlDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../sql");
+    const defaultPath = path.join(baseSqlDir, "schema.sql");
+    const migrationsDir = path.join(baseSqlDir, "migrations");
+    const orderedMigrations = [
+      {
+        version: "001_initial_supabase_schema",
+        file: "001_initial_supabase_schema.sql",
+        description: "Initial Supabase PostgreSQL schema, Auth FKs, and core business tables"
+      },
+      {
+        version: "002_user_vehicle_commands_rls",
+        file: "002_user_vehicle_commands_rls.sql",
+        description: "Extended user management, vehicle types/icons, and device commands audit"
+      },
+      {
+        version: "003_customer_device_guard_and_schema_migrations",
+        file: "003_customer_device_guard_and_schema_migrations.sql",
+        description: "Customer device protected-field guard trigger, full RLS enforcement, and schema registry"
+      }
+    ];
+
     await this._withSerializedClient(async (client) => {
       // PGlite is a test-only compatibility fixture. Hosted Supabase already owns
       // auth.users and its roles, so production SQL never alters the auth schema.
@@ -453,7 +469,52 @@ export class SupabaseDatabaseAdapter {
           GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE auth.users TO service_role;
         `);
       }
-      await client.exec(sqlText);
+
+      if (customSchemaPath) {
+        const customSql = fs.readFileSync(customSchemaPath, "utf8");
+        await client.exec(customSql);
+        return;
+      }
+
+      // Ensure migration registry table exists before checking or applying ordered migrations
+      await client.exec(`
+        CREATE TABLE IF NOT EXISTS public.schema_migrations (
+          version VARCHAR(64) PRIMARY KEY,
+          description TEXT NOT NULL,
+          applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      if (fs.existsSync(migrationsDir)) {
+        for (const item of orderedMigrations) {
+          const migrationFilePath = path.join(migrationsDir, item.file);
+          if (!fs.existsSync(migrationFilePath)) {
+            throw new Error(`MIGRATION_FILE_MISSING:${item.file}`);
+          }
+          const existing = await client.query(
+            `SELECT version FROM public.schema_migrations WHERE version = $1`,
+            [item.version]
+          );
+          if (existing.rows.length === 0) {
+            const migrationSql = fs.readFileSync(migrationFilePath, "utf8");
+            await client.query("BEGIN");
+            try {
+              await client.exec(migrationSql);
+              await client.query(
+                `INSERT INTO public.schema_migrations (version, description) VALUES ($1, $2)`,
+                [item.version, item.description]
+              );
+              await client.query("COMMIT");
+            } catch (err) {
+              await client.query("ROLLBACK");
+              throw err;
+            }
+          }
+        }
+      } else {
+        const sqlText = fs.readFileSync(defaultPath, "utf8");
+        await client.exec(sqlText);
+      }
     });
   }
 
@@ -523,7 +584,9 @@ export class SupabaseAuthService {
   constructor({
     supabaseUrl,
     supabaseAnonKey,
-    supabaseServiceRoleKey,
+    supabasePublishableKey = null,
+    supabaseSecretKey = null,
+    supabaseServiceRoleKey = null,
     supabaseJwtSecret,
     dbAdapter
   }) {
@@ -535,15 +598,18 @@ export class SupabaseAuthService {
     this.supabaseUrl = supabaseUrl;
     this._wsTickets = new Map();
 
+    const publicKey = supabaseAnonKey || supabasePublishableKey || "";
+    const privilegedKey = supabaseSecretKey || supabaseServiceRoleKey || "";
+
     const hasRemoteSupabase =
-      Boolean(supabaseUrl && supabaseAnonKey && supabaseServiceRoleKey) &&
+      Boolean(supabaseUrl && publicKey && privilegedKey) &&
       !String(supabaseUrl).includes("replace_with");
 
     if (hasRemoteSupabase) {
-      this.anonClient = createSupabaseClient(supabaseUrl, supabaseAnonKey, {
+      this.anonClient = createSupabaseClient(supabaseUrl, publicKey, {
         auth: { persistSession: false, autoRefreshToken: false }
       });
-      this.adminClient = createSupabaseClient(supabaseUrl, supabaseServiceRoleKey, {
+      this.adminClient = createSupabaseClient(supabaseUrl, privilegedKey, {
         auth: { persistSession: false, autoRefreshToken: false }
       });
     } else {

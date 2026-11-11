@@ -1119,33 +1119,48 @@ test("5. Complete User, Vehicle, Subscription & GPS Control System: phone/userna
     [
       "001_initial_supabase_schema",
       "002_user_vehicle_commands_rls",
-      "003_customer_device_guard_and_fleet_ops"
+      "003_customer_device_guard_and_schema_migrations"
     ]
+  );
+
+  // Verify customer cannot read or insert into public.schema_migrations (RLS + FORCE RLS)
+  const customerMigrationsRes = await db.runTenantTransaction(customer1Claims, async (tx) => {
+    return tx.query("SELECT version FROM public.schema_migrations");
+  });
+  assert.equal(customerMigrationsRes.rows.length, 0);
+  await assert.rejects(
+    () =>
+      db.runTenantTransaction(customer1Claims, async (tx) => {
+        await tx.query(
+          "INSERT INTO public.schema_migrations (version, description) VALUES ('999_unauthorized', 'Attempted by customer')"
+        );
+      }),
+    /row-level security/i
   );
 
   const { checkGitHubReleaseStatus } = await import("../src/core.mjs");
   const releaseStatus = await checkGitHubReleaseStatus({
     repo: "mahmoudhindam9-stack/gps",
-    currentVersion: "1.2.0",
+    currentVersion: "1.3.0",
     autoUpdateEnabled: true,
     fetchImpl: async () =>
       Response.json({
-        tag_name: "v1.3.0",
-        name: "VeloTrack GPS v1.3.0",
+        tag_name: "v1.4.0",
+        name: "VeloTrack GPS v1.4.0",
         published_at: "2026-11-10T12:00:00Z",
-        html_url: "https://github.com/mahmoudhindam9-stack/gps/releases/tag/v1.3.0",
+        html_url: "https://github.com/mahmoudhindam9-stack/gps/releases/tag/v1.4.0",
         body: "Fleet Intelligence & Security Release",
         assets: [
           {
-            name: "velotrack-android-v1.3.0.apk",
-            browser_download_url: "https://github.com/mahmoudhindam9-stack/gps/releases/download/v1.3.0/velotrack-android-v1.3.0.apk"
+            name: "velotrack-android-v1.4.0.apk",
+            browser_download_url: "https://github.com/mahmoudhindam9-stack/gps/releases/download/v1.4.0/velotrack-android-v1.4.0.apk"
           }
         ]
       })
   });
   assert.equal(releaseStatus.updateAvailable, true);
-  assert.equal(releaseStatus.latestVersion, "1.3.0");
-  assert.equal(releaseStatus.schemaVersion, "003_customer_device_guard_and_fleet_ops");
+  assert.equal(releaseStatus.latestVersion, "1.4.0");
+  assert.equal(releaseStatus.schemaVersion, "003_customer_device_guard_and_schema_migrations");
 
   engine.clearAllTimers();
   await db.close();

@@ -4,6 +4,7 @@
     <string name="nav_map">Map</string>
     <string name="nav_activate">Activate</string>
     <string name="nav_devices">Devices</string>
+    <string name="nav_fleet">Fleet</string>
     <string name="nav_server">Server</string>
     <string name="action_login">Login</string>
     <string name="action_logout">Logout</string>

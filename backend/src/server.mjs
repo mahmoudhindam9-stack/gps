@@ -541,8 +541,14 @@ export async function getOrCreateVeloTrackRuntime() {
 
   cachedRuntimePromise = (async () => {
     const supabaseUrl = process.env.SUPABASE_URL ?? "";
-    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY ?? "";
-    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+    const supabaseAnonKey =
+      process.env.SUPABASE_ANON_KEY ||
+      process.env.SUPABASE_PUBLISHABLE_KEY ||
+      "";
+    const supabaseSecretKey =
+      process.env.SUPABASE_SECRET_KEY ||
+      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      "";
     const supabaseJwtSecret = process.env.SUPABASE_JWT_SECRET ?? "";
     const supabaseDbUrl = process.env.SUPABASE_DB_URL ?? process.env.VELOTRACK_DB_URL ?? "";
 
@@ -557,7 +563,7 @@ export async function getOrCreateVeloTrackRuntime() {
     if (
       !supabaseUrl ||
       !supabaseAnonKey ||
-      !supabaseServiceRoleKey ||
+      !supabaseSecretKey ||
       !supabaseDbUrl ||
       !supabaseJwtSecret ||
       supabaseDbUrl.includes("replace_with") ||
@@ -578,7 +584,8 @@ export async function getOrCreateVeloTrackRuntime() {
     const authService = new SupabaseAuthService({
       supabaseUrl,
       supabaseAnonKey,
-      supabaseServiceRoleKey,
+      supabaseSecretKey,
+      supabaseServiceRoleKey: supabaseSecretKey,
       supabaseJwtSecret,
       dbAdapter
     });
