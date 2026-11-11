@@ -7,22 +7,25 @@ This branch establishes a real, self-hostable Traccar Server deployment for Velo
 - Pinned Traccar Server image: `traccar/traccar:6.17.0`.
 - Dedicated TimescaleDB/PostgreSQL storage, separate from all VeloTrack business data.
 - The Traccar API/web UI is bound to `127.0.0.1:8082`, not the public interface.
-- Only the GT06 tracker listener (`TCP 5023`) is published by default.
+- All 267 non-zero default protocol listeners from the pinned Traccar 6.17.0 registry are published: TCP and UDP ports 5001–5174 and 5176–5268. Port 5175 is intentionally excluded.
 - Traccar connection status events are enabled.
 - Local secrets are supplied through an ignored `.env` file.
 
 This is the server foundation, not the completed VeloTrack backend or Android integration. The Android prototype still contains mock behavior that must be removed before production use.
 
-## Official compatibility baseline
+## Official universal compatibility baseline
 
-The official Traccar supported-device list identifies **Concox GT06N** as protocol `gt06`, port `5023`. The GT06 protocol decoder is part of Traccar Server. A physical test is still required because the exact firmware revision, server-command syntax, SIM behavior, and login/heartbeat behavior are device-specific.
+The pinned upstream source is `traccar/traccar` tag `v6.17.0`, file `src/main/java/org/traccar/config/ProtocolConfig.java`.
 
-The official server exposes:
-- REST API under `/api/*`.
-- Live WebSocket at `/api/socket`.
-- Device status, positions, events, routes/reports and device administration.
+- 268 protocol classes are registered.
+- 267 classes have a non-zero inbound listener port.
+- Inbound ports are 5001–5174 and 5176–5268. Port 5175 is not assigned.
+- Orbcomm is registered with port 0 and has no standard inbound socket listener.
+- The exact protocol-to-port mapping is maintained in `deployment/traccar/protocol-ports.json`.
 
-REST authentication supports the documented Traccar authentication methods. WebSocket authentication requires a valid Traccar session cookie. Never generate a cookie locally or treat a hard-coded cookie as a connected session.
+Traccar's server code determines which protocols use TCP, UDP, or both. The ingress layer publishes both transports for the complete listener-port set; only the transport(s) implemented by a given Traccar protocol accept data. `traccar.xml` deliberately does not set a `protocols.enable` whitelist, so the full default protocol set remains enabled.
+
+This is complete coverage of the network listener registry shipped in Traccar 6.17.0, not a guarantee for every proprietary clone or firmware variant. Exact device/firmware compatibility still requires protocol identification and real packet tests.
 
 ## Target VeloTrack architecture
 
@@ -110,7 +113,7 @@ The Traccar Server and official web/mobile projects have their own license files
 ## Operational security
 
 - Do not expose Traccar port `8082` or the database port to the public internet.
-- Publish only the required protocol listener(s), starting with TCP `5023`.
+- Publish the Traccar 6.17.0 listener ranges TCP/UDP 5001–5174 and 5176–5268; do not publish 8082 or 5432.
 - Put the backend behind HTTPS and a restrictive firewall/reverse proxy.
 - Use strong, unique database passwords and never commit `.env`.
 - Back up both Traccar telemetry data and VeloTrack business data; test restoration.

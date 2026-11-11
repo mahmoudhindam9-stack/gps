@@ -1,6 +1,6 @@
 # Gemini Task — Complete the VeloTrack GPS Traccar Integration
 
-You are continuing work in the existing repository `mahmoudhindam9-stack/gps`, on branch `integration/traccar-ecosystem-foundation`.
+You are continuing work in the existing repository `mahmoudhindam9-stack/gps`, on branch `feature/universal-traccar-ingress-2026-11-11`.
 
 The Traccar deployment foundation has already been added in:
 - `deployment/traccar/compose.yaml`
@@ -48,16 +48,28 @@ The production app must start with an empty database and an empty device list. I
 
 ### A. Traccar Server
 
-Use the real self-hosted Traccar deployment added to this branch. Preserve the loopback-only API binding and public GT06 TCP listener. The official device list maps Concox GT06N to protocol `gt06` and port `5023`, but exact hardware/firmware compatibility must still be tested.
+Use the real self-hosted Traccar deployment added to this branch. The pinned version is 6.17.0.
+
+Universal device protocol support is mandatory:
+- Use the official Traccar 6.17.0 protocol registry, not a GT06-only configuration.
+- The registry has 268 protocol classes: 267 non-zero network listeners plus Orbcomm (port 0, no inbound listener).
+- The exact port map is `deployment/traccar/protocol-ports.json`.
+- The full inbound port set is TCP and UDP 5001–5174 and 5176–5268. Port 5175 is intentionally unassigned.
+- Do not add a `protocols.enable` whitelist or disable protocols to reduce resource usage.
+- Keep the Traccar web/API on 127.0.0.1:8082 and the telemetry database private.
+- Use the matching default port for each device protocol and preserve device IMEI/unique-ID correlation.
+- Do not claim compatibility for an unknown clone or firmware without identifying its protocol and testing a real packet.
 
 Use Traccar's documented REST API and WebSocket:
 - Authenticate through a real Traccar account/session or backend service credentials.
 - WebSocket authentication must use a valid server-issued session cookie; never manufacture a JSESSIONID.
 - Handle authentication failure, network loss, reconnect with bounded exponential backoff, and state reconciliation after reconnect.
-- Load the actual registered devices, positions and status from Traccar.
+- Load actual registered devices, positions and status from Traccar.
 - Fetch route history from the Traccar API using correct ISO-8601 date/time parameters and correlate it to VeloTrack device records.
 - Do not query or mutate Traccar internal database tables directly.
 - Do not expose a Traccar admin token/password in Android or client-side code.
+
+Railway is only a temporary web/API and OsmAnd smoke-test environment. The all-protocol TCP/UDP ingress in `deployment/traccar/compose.yaml` is the VPS deployment target; do not claim Railway's single exposed TCP listener replaces it.
 
 ### B. VeloTrack backend and business database
 
@@ -123,6 +135,12 @@ Read and enforce `docs/PRODUCT_UI_RULES.md` in every change.
 
 **No explanatory text under/around buttons or sections.** No subtitles, descriptions, helper paragraphs, instructional empty-state copy, or tooltips explaining ordinary controls. Use concise titles, short button labels, compact status text and icons. Keep developer/setup documentation in Markdown files, not in the app UI. Accessibility semantics are still required.
 
+### Docker daemon performance for wide port publishing
+
+Read the official Traccar Docker guidance: https://www.traccar.org/docker/.
+The multi-port TCP/UDP ingress can spawn one docker-proxy process per published port when Docker userland proxy is enabled. Inspect `/etc/docker/daemon.json` and ensure `"userland-proxy": false` for the production VPS.
+Do not overwrite an existing daemon.json. Merge this key while preserving all other settings, validate the JSON, explain that restarting Docker interrupts all containers, and only perform the restart during a safe maintenance window. The deployment script deliberately does not mutate global Docker daemon configuration.
+
 ## Required validation and delivery
 
 1. Run a source-wide search for fake/mock/demo/simulation paths and remove or isolate every production occurrence.
@@ -130,7 +148,7 @@ Read and enforce `docs/PRODUCT_UI_RULES.md` in every change.
 3. Validate the Compose configuration with `docker compose config`.
 4. Start Traccar only when valid server credentials/environment are supplied; verify `GET /api/health` returns `OK`.
 5. Add automated tests for Traccar API parsing, authentication failures, reconnect/state reconciliation, IMEI-to-device correlation, first-connection subscription start, expiry, reassignment, and SMS state transitions. Keep test data isolated.
-6. Provide a real-device acceptance checklist for the physical Concox GT06N and the Egyptian SIM/GSM gateway. Do not claim those checks passed unless they were physically performed.
+6. Provide a real-device acceptance checklist for representative protocol families (including Concox GT06/GT06N, Teltonika, Queclink, and other customer-owned models) plus the Egyptian SIM/GSM gateway. Do not claim any family passed until a real tracker packet has been decoded. Do not claim those checks passed unless they were physically performed.
 7. Report exact files changed, tests run, test results, missing secrets/configuration, deployment steps, and remaining hardware checks.
 8. Do not deploy to production, publish an APK, or merge this branch into `main` unless the owner explicitly approves it.
 
