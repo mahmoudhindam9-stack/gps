@@ -15,7 +15,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class ExampleRobolectricTest {
 
     @Test
@@ -138,4 +143,97 @@ class ExampleRobolectricTest {
         assertFalse(suspendedAggregate.isSubscriptionAccessible(serverNowMillis = expiresMillis - 1_000L))
         assertEquals("SUSPENDED", suspendedAggregate.compactSubscriptionBadge(expiresMillis - 1_000L))
     }
+
+    @Test
+    fun roomSnapshotCache_persistsServerRecordsAndNeverFabricatesOfflineSession() = kotlinx.coroutines.test.runTest {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(
+            context,
+            com.example.data.local.VeloTrackDatabase::class.java
+        ).allowMainThreadQueries().build()
+        val dao = db.veloTrackDao()
+
+        val user = com.example.data.local.UserProfileEntity(
+            id = "cust-101",
+            username = "cust_alpha",
+            email = "alpha@velotrack.org",
+            phone = "+201012345678",
+            fullName = "Customer Alpha",
+            role = "CUSTOMER",
+            mustChangePassword = false,
+            isActive = true,
+            createdAt = 1_710_000_000_000L
+        )
+        val profile = com.example.data.local.DeviceProfileEntity(
+            id = "prof-1",
+            manufacturer = "Concox",
+            model = "GT06N",
+            firmwareVersion = "V2.4",
+            traccarProtocol = "gt06",
+            serverHost = "gps.velotrack.org",
+            serverPort = 5023,
+            transport = "TCP",
+            serverMode = "DOMAIN",
+            requiresDevicePassword = false,
+            defaultDevicePassword = null,
+            requiresGprsonCommand = false,
+            serverCommandTemplate = "SERVER,1,{HOST},{PORT},0#",
+            gprsonCommandTemplate = null,
+            optionalTimerCommandTemplate = null,
+            expectedReplyPattern = "OK",
+            isVerified = true
+        )
+        val device = DeviceEntity(
+            id = "dev-101",
+            imei = "358739051122332",
+            serialNumber = "SN-101",
+            traccarDeviceId = 800L,
+            profileId = "prof-1",
+            currentCustomerId = "cust-101",
+            vehicleName = "Alpha Van",
+            vehicleType = "VAN",
+            vehicleIcon = "van",
+            plateNumber = "CAI-101",
+            simLocalNumber = "01012345678",
+            simE164Number = "+201012345678",
+            activationStatus = ActivationStatus.ACTIVATED.name,
+            connectionState = DeviceConnectionState.ONLINE_GPS_FIX.name,
+            hasValidFix = true,
+            lastLat = 30.0444,
+            lastLng = 31.2357,
+            lastSpeedKmh = 42f,
+            lastHeading = 90f,
+            ignitionOn = true,
+            firstConnectedAt = 1_710_000_100_000L,
+            lastSeenAt = 1_710_000_200_000L,
+            createdAt = 1_710_000_000_000L
+        )
+        val sub = SubscriptionEntity(
+            id = "sub-101",
+            deviceId = "dev-101",
+            customerId = "cust-101",
+            planDuration = PlanDuration.MONTH_12.name,
+            status = SubscriptionStatus.ACTIVE.name,
+            startedAt = 1_710_000_100_000L,
+            expiresAt = PlanDuration.MONTH_12.computeExpiryMillis(1_710_000_100_000L),
+            adminOverrideBy = null,
+            adminOverrideReason = null
+        )
+
+        dao.replaceSnapshotFromServer(
+            users = listOf(user),
+            profiles = listOf(profile),
+            devices = listOf(device),
+            subscriptions = listOf(sub),
+            smsLogs = emptyList(),
+            subHistory = emptyList(),
+            ownHistory = emptyList()
+        )
+
+        assertEquals(1, dao.getAllDevicesOnce().size)
+        assertEquals("Alpha Van", dao.getAllDevicesOnce().first().vehicleName)
+
+        db.close()
+    }
 }
+

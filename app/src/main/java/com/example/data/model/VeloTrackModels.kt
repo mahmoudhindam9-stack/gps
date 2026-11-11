@@ -274,10 +274,11 @@ object SimAndImeiValidator {
 
 data class GitHubReleaseState(
     val repository: String = "mahmoudhindam9-stack/gps",
-    val currentVersion: String = "1.1.0",
-    val latestVersion: String = "1.1.0",
-    val tagName: String = "v1.1.0",
-    val releaseName: String = "VeloTrack GPS v1.1.0",
+    val currentVersion: String = "1.2.0",
+    val schemaVersion: String = "003_customer_device_guard_and_fleet_ops",
+    val latestVersion: String = "1.2.0",
+    val tagName: String = "v1.2.0",
+    val releaseName: String = "VeloTrack GPS v1.2.0",
     val htmlUrl: String = "https://github.com/mahmoudhindam9-stack/gps/releases",
     val apkDownloadUrl: String? = null,
     val releaseNotes: String = "",

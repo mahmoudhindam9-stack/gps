@@ -17,7 +17,7 @@ import type {
   User
 } from "./types";
 
-export const APP_VERSION = "1.1.0";
+export const APP_VERSION = "1.2.0";
 export const GITHUB_REPO = "mahmoudhindam9-stack/gps";
 export const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
 const SESSION_KEY = "velotrack.web.session.v1";

@@ -237,7 +237,8 @@ export function verifyPassword(password, storedHash) {
   return crypto.timingSafeEqual(derived, keyBuf);
 }
 
-export const VELOTRACK_APP_VERSION = "1.1.0";
+export const VELOTRACK_APP_VERSION = "1.2.0";
+export const VELOTRACK_SCHEMA_VERSION = "003_customer_device_guard_and_fleet_ops";
 export const DEFAULT_GITHUB_REPO = "mahmoudhindam9-stack/gps";
 
 export function normalizeSemver(versionStr) {
@@ -297,6 +298,7 @@ export async function checkGitHubReleaseStatus({
     if (!releaseObj || !releaseObj.tag_name) {
       return {
         currentVersion,
+        schemaVersion: VELOTRACK_SCHEMA_VERSION,
         repository: cleanRepo,
         latestVersion: currentVersion,
         tagName: `v${currentVersion}`,
@@ -322,6 +324,7 @@ export async function checkGitHubReleaseStatus({
 
     return {
       currentVersion,
+      schemaVersion: VELOTRACK_SCHEMA_VERSION,
       repository: cleanRepo,
       latestVersion,
       tagName,
@@ -339,6 +342,7 @@ export async function checkGitHubReleaseStatus({
   } catch (err) {
     return {
       currentVersion,
+      schemaVersion: VELOTRACK_SCHEMA_VERSION,
       repository: cleanRepo,
       latestVersion: currentVersion,
       tagName: `v${currentVersion}`,

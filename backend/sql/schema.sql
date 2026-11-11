@@ -466,3 +466,28 @@ CREATE POLICY rls_device_commands_insert ON public.device_commands
             )
         )
     );
+
+-- =============================================================================
+-- 10. Forward-Only Schema Migration Registry (Non-Destructive Version Tracking)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS public.schema_migrations (
+    version VARCHAR(64) PRIMARY KEY,
+    description TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.schema_migrations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS rls_schema_migrations_admin_select ON public.schema_migrations;
+CREATE POLICY rls_schema_migrations_admin_select ON public.schema_migrations
+    FOR SELECT
+    USING (public.request_user_role() = 'ADMIN');
+
+GRANT SELECT, INSERT, UPDATE ON TABLE public.schema_migrations TO authenticated, service_role;
+
+INSERT INTO public.schema_migrations (version, description) VALUES
+    ('001_initial_supabase_schema', 'Initial Supabase PostgreSQL schema, Auth FKs, and tenant RLS'),
+    ('002_user_vehicle_commands_rls', 'Extended user management, vehicle types/icons, and device commands audit'),
+    ('003_customer_device_guard_and_fleet_ops', 'Customer device protected-field guard trigger and Fleet Intelligence modules')
+ON CONFLICT (version) DO NOTHING;
+

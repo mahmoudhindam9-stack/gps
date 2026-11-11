@@ -8,6 +8,7 @@ import {
   SupabaseDatabaseAdapter,
   TraccarBridgeClient,
   VELOTRACK_APP_VERSION,
+  VELOTRACK_SCHEMA_VERSION,
   VeloTrackEngine,
   checkGitHubReleaseStatus
 } from "./core.mjs";
@@ -133,6 +134,7 @@ export function createVeloTrackRequestListener({
           {
             status: healthy ? "OK" : "DEGRADED",
             version: appVersion,
+            schemaVersion: VELOTRACK_SCHEMA_VERSION,
             repository: githubRepo,
             supabaseConnected: databaseConnected,
             databaseError,

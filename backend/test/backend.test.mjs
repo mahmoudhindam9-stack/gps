@@ -540,6 +540,7 @@ test("3. Full-stack Supabase RLS tenant isolation, SMS state transitions, Tracca
   clientWsA.close();
   clientWsB.close();
   traccarClient.disconnectLiveSocket();
+  engine.clearAllTimers();
   apiServer.wsHub.close();
   await new Promise((resolve) => apiServer.close(resolve));
   for (const s of traccarSockets) s.close();
@@ -1092,16 +1093,59 @@ test("5. Complete User, Vehicle, Subscription & GPS Control System: phone/userna
   assert.equal(cmdHistory[0].commandType, "engineStop");
   assert.equal(cmdHistory[1].commandType, "positionSingle");
 
-  // 17. Ensure default admin credentials (`admin` / `Admin@123456`) and GitHub release auto-update check
-  await engine.ensureAdminCredentials({
+  // 17. Verify one-shot ensureAdminCredentials never resets changed admin password,
+  // verify forward-only schema_migrations registry, and verify GitHub release auto-update check
+  const ensureRes = await engine.ensureAdminCredentials({
     adminUsername: "admin",
     adminPassword: "Admin@123456",
     mustChangePassword: false
   });
-  const directAdminSession = await engine.login("admin", "Admin@123456");
+  assert.equal(ensureRes.bootstrapped, false);
+  assert.equal(ensureRes.reason, "ALREADY_BOOTSTRAPPED");
+  await assert.rejects(
+    () => engine.login("admin", "Admin@123456"),
+    /INVALID_CREDENTIALS/
+  );
+  const directAdminSession = await engine.login("admin", "AdminStrongPassword#2026");
   assert.equal(directAdminSession.user.username, "admin");
   assert.equal(directAdminSession.user.role, "ADMIN");
   assert.equal(directAdminSession.mustChangePassword, false);
+
+  const migrationsRes = await db.runTenantTransaction(adminClaims, async (tx) => {
+    return tx.query("SELECT version FROM public.schema_migrations ORDER BY version ASC");
+  });
+  assert.deepEqual(
+    migrationsRes.rows.map((r) => r.version),
+    [
+      "001_initial_supabase_schema",
+      "002_user_vehicle_commands_rls",
+      "003_customer_device_guard_and_fleet_ops"
+    ]
+  );
+
+  const { checkGitHubReleaseStatus } = await import("../src/core.mjs");
+  const releaseStatus = await checkGitHubReleaseStatus({
+    repo: "mahmoudhindam9-stack/gps",
+    currentVersion: "1.2.0",
+    autoUpdateEnabled: true,
+    fetchImpl: async () =>
+      Response.json({
+        tag_name: "v1.3.0",
+        name: "VeloTrack GPS v1.3.0",
+        published_at: "2026-11-10T12:00:00Z",
+        html_url: "https://github.com/mahmoudhindam9-stack/gps/releases/tag/v1.3.0",
+        body: "Fleet Intelligence & Security Release",
+        assets: [
+          {
+            name: "velotrack-android-v1.3.0.apk",
+            browser_download_url: "https://github.com/mahmoudhindam9-stack/gps/releases/download/v1.3.0/velotrack-android-v1.3.0.apk"
+          }
+        ]
+      })
+  });
+  assert.equal(releaseStatus.updateAvailable, true);
+  assert.equal(releaseStatus.latestVersion, "1.3.0");
+  assert.equal(releaseStatus.schemaVersion, "003_customer_device_guard_and_fleet_ops");
 
   engine.clearAllTimers();
   await db.close();

@@ -1,0 +1,21 @@
+{
+  "name": "VeloTrack GPS",
+  "version": "1.2.0",
+  "tagName": "v1.2.0",
+  "schemaVersion": "003_customer_device_guard_and_fleet_ops",
+  "android": {
+    "applicationId": "com.aistudio.velotrackgps.vtrkqx",
+    "versionCode": 3,
+    "versionName": "1.2.0",
+    "artifact": "velotrack-android-v1.2.0-debug.apk"
+  },
+  "web": {
+    "version": "1.2.0",
+    "artifact": "velotrack-web-v1.2.0.tar.gz"
+  },
+  "backend": {
+    "version": "1.2.0",
+    "artifact": "velotrack-backend-v1.2.0.tar.gz",
+    "schemaArtifact": "schema-v1.2.0.sql"
+  }
+}

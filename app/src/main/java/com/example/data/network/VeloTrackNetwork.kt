@@ -16,6 +16,7 @@ import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.PATCH
 import retrofit2.http.POST
@@ -265,11 +266,108 @@ data class ServerRoutePointDto(
 
 data class ServerHealthResponseDto(
     val status: String,
+    val version: String = "1.2.0",
+    val schemaVersion: String = "003_customer_device_guard_and_fleet_ops",
     val supabaseConnected: Boolean = false,
     val traccarConnected: Boolean = false,
     val traccarWsConnected: Boolean = false,
     val traccarLastSyncAtMs: Long? = null,
     val smsGatewayConfigured: Boolean = false
+)
+
+data class CheckUpdateRequestDto(
+    val autoUpdateEnabled: Boolean = true
+)
+
+data class ServerSystemVersionDto(
+    val currentVersion: String = "1.2.0",
+    val schemaVersion: String = "003_customer_device_guard_and_fleet_ops",
+    val repository: String = "mahmoudhindam9-stack/gps",
+    val latestVersion: String = "1.2.0",
+    val tagName: String = "v1.2.0",
+    val releaseName: String = "VeloTrack GPS v1.2.0",
+    val publishedAt: String? = null,
+    val htmlUrl: String = "https://github.com/mahmoudhindam9-stack/gps/releases",
+    val apkDownloadUrl: String? = null,
+    val webBundleDownloadUrl: String? = null,
+    val releaseNotes: String = "",
+    val updateAvailable: Boolean = false,
+    val autoUpdateEnabled: Boolean = true,
+    val checkedAtMs: Long = 0L,
+    val status: String = "UP_TO_DATE"
+)
+
+data class ServerFleetEventDto(
+    val id: Long,
+    val type: String,
+    val eventTime: String? = null,
+    val eventTimeMs: Long? = null,
+    val deviceId: String,
+    val vehicleName: String,
+    val plateNumber: String = "",
+    val traccarDeviceId: Long,
+    val positionId: Long? = null,
+    val geofenceId: Long? = null,
+    val attributes: Map<String, Any?> = emptyMap()
+)
+
+data class ServerMileageSummaryDto(
+    val deviceId: String,
+    val vehicleName: String,
+    val plateNumber: String = "",
+    val traccarDeviceId: Long,
+    val distanceMeters: Double = 0.0,
+    val distanceKm: Double = 0.0,
+    val averageSpeedKmh: Double = 0.0,
+    val maxSpeedKmh: Double = 0.0,
+    val spentFuelLiters: Double? = null,
+    val engineHours: Double? = null
+)
+
+data class ServerFleetTelemetryDto(
+    val deviceId: String,
+    val vehicleName: String,
+    val plateNumber: String = "",
+    val traccarDeviceId: Long,
+    val connectionState: String = "OFFLINE",
+    val hasValidFix: Boolean = false,
+    val reportedAtMs: Long? = null,
+    val values: Map<String, Any?> = emptyMap()
+)
+
+data class ServerGeofenceDto(
+    val id: Long,
+    val name: String,
+    val description: String = "",
+    val area: String,
+    val deviceIds: List<String> = emptyList(),
+    val vehicleNames: List<String> = emptyList(),
+    val attributes: Map<String, Any?> = emptyMap()
+)
+
+data class CreateGeofenceRequestDto(
+    val name: String,
+    val description: String = "",
+    val area: String,
+    val deviceIds: List<String>
+)
+
+data class DeleteGeofenceResponseDto(
+    val id: Long,
+    val deleted: Boolean = false
+)
+
+data class CreateDeviceShareRequestDto(
+    val expiresInHours: Int = 24
+)
+
+data class ServerDeviceShareResponseDto(
+    val deviceId: String,
+    val vehicleName: String,
+    val token: String,
+    val shareUrl: String,
+    val expiresAt: String,
+    val expiresAtMs: Long
 )
 
 data class TraccarSyncResponseDto(
@@ -355,11 +453,11 @@ interface VeloTrackApiService {
         @Body request: SendActivationSmsRequestDto = SendActivationSmsRequestDto()
     ): Response<SendActivationSmsResponseDto>
 
-    @PATCH("api/v1/admin/devices/{deviceId}")
+    @PATCH("api/v1/devices/{deviceId}")
     suspend fun updateVehicleMetadata(
         @Path("deviceId") deviceId: String,
         @Body request: UpdateVehicleMetadataRequestDto
-    ): Response<ServerDeviceDto>
+    ): Response<ServerDeviceBundleDto>
 
     @POST("api/v1/admin/devices/{deviceId}/override-activate")
     suspend fun adminOverrideActivation(
@@ -403,6 +501,49 @@ interface VeloTrackApiService {
         @Query("from") fromIso8601: String,
         @Query("to") toIso8601: String
     ): Response<List<ServerRoutePointDto>>
+
+    @GET("api/v1/events")
+    suspend fun getFleetEvents(
+        @Query("from") fromIso8601: String,
+        @Query("to") toIso8601: String,
+        @Query("deviceId") deviceId: String? = null
+    ): Response<List<ServerFleetEventDto>>
+
+    @GET("api/v1/reports/summary")
+    suspend fun getMileageSummary(
+        @Query("from") fromIso8601: String,
+        @Query("to") toIso8601: String,
+        @Query("deviceId") deviceId: String? = null
+    ): Response<List<ServerMileageSummaryDto>>
+
+    @GET("api/v1/telemetry")
+    suspend fun getFleetTelemetry(
+        @Query("deviceId") deviceId: String? = null
+    ): Response<List<ServerFleetTelemetryDto>>
+
+    @GET("api/v1/geofences")
+    suspend fun getGeofences(): Response<List<ServerGeofenceDto>>
+
+    @POST("api/v1/geofences")
+    suspend fun createGeofence(
+        @Body request: CreateGeofenceRequestDto
+    ): Response<ServerGeofenceDto>
+
+    @DELETE("api/v1/geofences/{geofenceId}")
+    suspend fun deleteGeofence(
+        @Path("geofenceId") geofenceId: Long
+    ): Response<DeleteGeofenceResponseDto>
+
+    @POST("api/v1/devices/{deviceId}/share")
+    suspend fun createDeviceShare(
+        @Path("deviceId") deviceId: String,
+        @Body request: CreateDeviceShareRequestDto
+    ): Response<ServerDeviceShareResponseDto>
+
+    @POST("api/v1/system/check-update")
+    suspend fun checkSystemUpdate(
+        @Body request: CheckUpdateRequestDto = CheckUpdateRequestDto()
+    ): Response<ServerSystemVersionDto>
 
     @POST("api/v1/admin/traccar/sync")
     suspend fun triggerTraccarSync(): Response<TraccarSyncResponseDto>

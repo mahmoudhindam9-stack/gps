@@ -29,6 +29,9 @@ import com.example.data.model.VehicleType
 import com.example.data.network.ActivateDeviceRequestDto
 import com.example.data.network.AdminOverrideRequestDto
 import com.example.data.network.ChangePasswordRequestDto
+import com.example.data.network.CheckUpdateRequestDto
+import com.example.data.network.CreateDeviceShareRequestDto
+import com.example.data.network.CreateGeofenceRequestDto
 import com.example.data.network.CreateProfileRequestDto
 import com.example.data.network.LiveWsFrameDto
 import com.example.data.network.LoginRequestDto
@@ -39,7 +42,12 @@ import com.example.data.network.SendActivationSmsRequestDto
 import com.example.data.network.SendDeviceCommandRequestDto
 import com.example.data.network.ServerDeviceBundleDto
 import com.example.data.network.ServerDeviceProfileDto
+import com.example.data.network.ServerDeviceShareResponseDto
+import com.example.data.network.ServerFleetEventDto
+import com.example.data.network.ServerFleetTelemetryDto
+import com.example.data.network.ServerGeofenceDto
 import com.example.data.network.ServerHealthResponseDto
+import com.example.data.network.ServerMileageSummaryDto
 import com.example.data.network.ServerUserDto
 import com.example.data.network.TraccarDeviceDto
 import com.example.data.network.TraccarPositionDto
@@ -264,6 +272,34 @@ class VeloTrackRepository(
         _releaseState.value = current.copy(isChecking = true)
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             runCatching {
+                val backendRes = runCatching {
+                    apiProvider().checkSystemUpdate(
+                        CheckUpdateRequestDto(autoUpdateEnabled = current.autoUpdateEnabled)
+                    )
+                }.getOrNull()
+
+                if (backendRes != null && backendRes.isSuccessful && backendRes.body() != null) {
+                    val b = backendRes.body()!!
+                    val updated = current.copy(
+                        repository = b.repository,
+                        currentVersion = b.currentVersion,
+                        schemaVersion = b.schemaVersion,
+                        latestVersion = b.latestVersion,
+                        tagName = b.tagName,
+                        releaseName = b.releaseName,
+                        htmlUrl = b.htmlUrl,
+                        apkDownloadUrl = b.apkDownloadUrl,
+                        releaseNotes = b.releaseNotes,
+                        publishedAt = b.publishedAt,
+                        updateAvailable = b.updateAvailable,
+                        autoUpdateEnabled = b.autoUpdateEnabled,
+                        isChecking = false,
+                        lastCheckedAtMs = b.checkedAtMs.takeIf { it > 0L } ?: System.currentTimeMillis()
+                    )
+                    _releaseState.value = updated
+                    return@runCatching updated
+                }
+
                 val dto = VeloTrackNetworkClient.fetchLatestGitHubRelease(current.repository)
                 if (dto != null && dto.tag_name.isNotBlank()) {
                     val latestVer = dto.tag_name.removePrefix("v").removePrefix("V")
@@ -297,75 +333,6 @@ class VeloTrackRepository(
                     lastCheckedAtMs = System.currentTimeMillis()
                 )
             }
-        }
-    }
-
-    private fun isLocalFallbackSession(): Boolean {
-        return _session.value?.token?.startsWith("local-") == true
-    }
-
-    private suspend fun ensureLocalBootstrapEntities() {
-        val now = System.currentTimeMillis()
-        val existingUsers = dao.getAllUsersOnce()
-        if (existingUsers.none { it.username.equals("admin", ignoreCase = true) }) {
-            dao.insertUsers(
-                listOf(
-                    UserProfileEntity(
-                        id = "usr-admin-root",
-                        username = "admin",
-                        email = "admin@velotrack.local",
-                        phone = "",
-                        fullName = "مدير النظام",
-                        role = UserRole.ADMIN.name,
-                        mustChangePassword = false,
-                        isActive = true,
-                        createdAt = now
-                    )
-                )
-            )
-        }
-        if (existingUsers.none { it.role == UserRole.CUSTOMER.name }) {
-            dao.insertUsers(
-                listOf(
-                    UserProfileEntity(
-                        id = "usr-cust-default",
-                        username = "customer1",
-                        email = "customer1@velotrack.local",
-                        phone = "+201012345678",
-                        fullName = "عميل فيلوتراك",
-                        role = UserRole.CUSTOMER.name,
-                        mustChangePassword = false,
-                        isActive = true,
-                        createdAt = now
-                    )
-                )
-            )
-        }
-        val existingProfiles = dao.getAllProfilesOnce()
-        if (existingProfiles.isEmpty()) {
-            dao.insertDeviceProfiles(
-                listOf(
-                    DeviceProfileEntity(
-                        id = "prof-gt06n-v2",
-                        manufacturer = "Concox",
-                        model = "GT06N",
-                        firmwareVersion = "GT06N_V2.4",
-                        traccarProtocol = "gt06",
-                        serverHost = "gps.velotrack.local",
-                        serverPort = 5023,
-                        transport = "TCP",
-                        serverMode = "DNS",
-                        requiresDevicePassword = false,
-                        defaultDevicePassword = null,
-                        requiresGprsonCommand = false,
-                        serverCommandTemplate = "SERVER,1,{HOST},{PORT},0#",
-                        gprsonCommandTemplate = null,
-                        optionalTimerCommandTemplate = "TIMER,10,60#",
-                        expectedReplyPattern = "OK",
-                        isVerified = true
-                    )
-                )
-            )
         }
     }
 
@@ -434,8 +401,8 @@ class VeloTrackRepository(
             body
         }.onFailure { err ->
             _serverStatus.value = _serverStatus.value.copy(
-                connectionState = if (isLocalFallbackSession()) BackendConnectionState.CONNECTED else BackendConnectionState.DISCONNECTED,
-                supabaseConnected = isLocalFallbackSession(),
+                connectionState = BackendConnectionState.DISCONNECTED,
+                supabaseConnected = false,
                 traccarBridgeConnected = false,
                 liveWsConnected = false,
                 lastErrorMessage = err.message ?: "Server unreachable"
@@ -454,37 +421,13 @@ class VeloTrackRepository(
         )
         return runCatching {
             dao.purgeLegacyDemoCache()
-            val response = try {
-                apiProvider().login(
-                    LoginRequestDto(
-                        identifier = cleanIdentifier,
-                        email = cleanIdentifier,
-                        password = password
-                    )
+            val response = apiProvider().login(
+                LoginRequestDto(
+                    identifier = cleanIdentifier,
+                    email = cleanIdentifier,
+                    password = password
                 )
-            } catch (networkErr: Throwable) {
-                if (cleanIdentifier.equals("admin", ignoreCase = true) && password == "Admin@123456") {
-                    ensureLocalBootstrapEntities()
-                    val localSession = AuthenticatedSession(
-                        token = "local-admin-${System.currentTimeMillis()}",
-                        userId = "usr-admin-root",
-                        username = "admin",
-                        email = "admin@velotrack.local",
-                        fullName = "مدير النظام",
-                        role = UserRole.ADMIN,
-                        mustChangePassword = false
-                    )
-                    VeloTrackNetworkClient.bearerToken = localSession.token
-                    _session.value = localSession
-                    _serverStatus.value = _serverStatus.value.copy(
-                        connectionState = BackendConnectionState.CONNECTED,
-                        supabaseConnected = true,
-                        lastErrorMessage = null
-                    )
-                    return@runCatching localSession
-                }
-                throw networkErr
-            }
+            )
             if (!response.isSuccessful || response.body() == null) {
                 val code = response.code()
                 throw IllegalStateException(
@@ -539,12 +482,6 @@ class VeloTrackRepository(
         if (currentPassword == newPassword) {
             return Result.failure(IllegalArgumentException("New password must differ"))
         }
-        if (isLocalFallbackSession()) {
-            val current = _session.value ?: return Result.failure(IllegalStateException("Not authenticated"))
-            val updated = current.copy(mustChangePassword = false)
-            _session.value = updated
-            return Result.success(updated)
-        }
         return runCatching {
             val response = apiProvider().changePassword(
                 ChangePasswordRequestDto(
@@ -576,7 +513,7 @@ class VeloTrackRepository(
 
     fun connectLiveStream() {
         val currentSession = _session.value ?: return
-        if (currentSession.mustChangePassword || isLocalFallbackSession()) return
+        if (currentSession.mustChangePassword) return
 
         disconnectLiveStream()
         activeWebSocket = VeloTrackNetworkClient.openLiveWebSocket(
@@ -629,7 +566,7 @@ class VeloTrackRepository(
         val delayMs = ReconnectPolicy.computeBackoffMillis(reconnectAttempt++)
         reconnectJob = repoScope.launch {
             delay(delayMs)
-            if (_session.value != null && _session.value?.mustChangePassword == false && !isLocalFallbackSession()) {
+            if (_session.value != null && _session.value?.mustChangePassword == false) {
                 refreshSnapshotFromServer()
                 connectLiveStream()
             }
@@ -657,15 +594,6 @@ class VeloTrackRepository(
             ?: return Result.failure(IllegalStateException("Not authenticated"))
         if (activeSession.mustChangePassword) {
             return Result.failure(IllegalStateException("Password change required"))
-        }
-        if (isLocalFallbackSession()) {
-            ensureLocalBootstrapEntities()
-            _serverStatus.value = _serverStatus.value.copy(
-                connectionState = BackendConnectionState.CONNECTED,
-                supabaseConnected = true,
-                lastErrorMessage = null
-            )
-            return Result.success(Unit)
         }
         return runCatching {
             val api = apiProvider()
@@ -748,69 +676,6 @@ class VeloTrackRepository(
             return Result.failure(IllegalArgumentException("All fields required"))
         }
 
-        if (isLocalFallbackSession()) {
-            val now = System.currentTimeMillis()
-            val devId = "dev-$now"
-            val subId = "sub-$now"
-            val profile = dao.getAllProfilesOnce().firstOrNull { it.id == profileId }
-            val cmdText = (profile?.serverCommandTemplate ?: "SERVER,1,{HOST},{PORT},0#")
-                .replace("{HOST}", profile?.serverHost ?: "gps.velotrack.local")
-                .replace("{PORT}", (profile?.serverPort ?: 5023).toString())
-            val device = DeviceEntity(
-                id = devId,
-                imei = cleanImei,
-                serialNumber = serialNumber?.trim()?.takeIf { it.isNotEmpty() },
-                traccarDeviceId = (cleanImei.takeLast(6).toLongOrNull() ?: 1000L),
-                profileId = profileId,
-                currentCustomerId = customerId,
-                vehicleName = vehicleName.trim(),
-                vehicleType = vehicleType.name,
-                vehicleIcon = vehicleIcon.key,
-                plateNumber = plateNumber.trim(),
-                simLocalNumber = normalizedSim.localNumber,
-                simE164Number = normalizedSim.e164Number,
-                activationStatus = ActivationStatus.SMS_SENT.name,
-                connectionState = DeviceConnectionState.OFFLINE.name,
-                hasValidFix = false,
-                lastLat = null,
-                lastLng = null,
-                lastSpeedKmh = 0f,
-                lastHeading = 0f,
-                ignitionOn = false,
-                firstConnectedAt = null,
-                lastSeenAt = null,
-                createdAt = now
-            )
-            val sub = SubscriptionEntity(
-                id = subId,
-                deviceId = devId,
-                customerId = customerId,
-                planDuration = planDuration.name,
-                status = SubscriptionStatus.AWAITING_FIRST_CONNECTION.name,
-                startedAt = null,
-                expiresAt = null,
-                adminOverrideBy = null,
-                adminOverrideReason = null
-            )
-            val smsLog = ActivationSmsLogEntity(
-                id = "sms-$now",
-                deviceId = devId,
-                stepOrder = 1,
-                commandKey = "SERVER",
-                commandText = cmdText,
-                gatewayMessageId = "MSG-$now",
-                status = SmsStepStatus.SENT.name,
-                deviceReply = null,
-                failureReason = null,
-                sentAt = now,
-                completedAt = null
-            )
-            dao.insertDevices(listOf(device))
-            dao.insertSubscriptions(listOf(sub))
-            dao.insertSmsLogs(listOf(smsLog))
-            return Result.success(devId)
-        }
-
         return runCatching {
             val res = apiProvider().activateDevice(
                 ActivateDeviceRequestDto(
@@ -840,15 +705,6 @@ class VeloTrackRepository(
         deviceId: String,
         idempotencyKey: String? = null
     ): Result<Boolean> {
-        if (isLocalFallbackSession()) {
-            val now = System.currentTimeMillis()
-            val logs = dao.getAllSmsLogsOnce().filter { it.deviceId == deviceId }
-            val updated = logs.map {
-                it.copy(status = SmsStepStatus.SENT.name, sentAt = now)
-            }
-            if (updated.isNotEmpty()) dao.insertSmsLogs(updated)
-            return Result.success(false)
-        }
         return runCatching {
             val res = apiProvider().sendActivationSms(
                 deviceId = deviceId,
@@ -871,36 +727,6 @@ class VeloTrackRepository(
         if (cleanReason.length < 4) {
             return Result.failure(IllegalArgumentException("Audit reason required"))
         }
-        if (isLocalFallbackSession()) {
-            val now = System.currentTimeMillis()
-            val device = dao.getAllDevicesOnce().firstOrNull { it.id == deviceId }
-                ?: return Result.failure(IllegalArgumentException("Device not found"))
-            val sub = dao.getAllSubscriptionsOnce().firstOrNull { it.deviceId == deviceId }
-                ?: return Result.failure(IllegalArgumentException("Subscription not found"))
-            val plan = runCatching { PlanDuration.valueOf(sub.planDuration) }.getOrDefault(PlanDuration.MONTH_12)
-            dao.insertDevices(
-                listOf(
-                    device.copy(
-                        activationStatus = ActivationStatus.ACTIVATED.name,
-                        connectionState = DeviceConnectionState.ONLINE_NO_FIX.name,
-                        firstConnectedAt = device.firstConnectedAt ?: now,
-                        lastSeenAt = now
-                    )
-                )
-            )
-            dao.insertSubscriptions(
-                listOf(
-                    sub.copy(
-                        status = SubscriptionStatus.ACTIVE.name,
-                        startedAt = now,
-                        expiresAt = plan.computeExpiryMillis(now),
-                        adminOverrideBy = _session.value?.userId,
-                        adminOverrideReason = cleanReason
-                    )
-                )
-            )
-            return Result.success(Unit)
-        }
         return runCatching {
             val res = apiProvider().adminOverrideActivation(
                 deviceId = deviceId,
@@ -921,16 +747,6 @@ class VeloTrackRepository(
         if (newCustomerId.isBlank() || reason.trim().isEmpty()) {
             return Result.failure(IllegalArgumentException("Customer and reason required"))
         }
-        if (isLocalFallbackSession()) {
-            val device = dao.getAllDevicesOnce().firstOrNull { it.id == deviceId }
-                ?: return Result.failure(IllegalArgumentException("Device not found"))
-            val sub = dao.getAllSubscriptionsOnce().firstOrNull { it.deviceId == deviceId }
-            dao.insertDevices(listOf(device.copy(currentCustomerId = newCustomerId)))
-            if (sub != null) {
-                dao.insertSubscriptions(listOf(sub.copy(customerId = newCustomerId)))
-            }
-            return Result.success(Unit)
-        }
         return runCatching {
             val res = apiProvider().reassignDeviceCustomer(
                 deviceId = deviceId,
@@ -950,23 +766,6 @@ class VeloTrackRepository(
         deviceId: String,
         planDuration: PlanDuration
     ): Result<Unit> {
-        if (isLocalFallbackSession()) {
-            val now = System.currentTimeMillis()
-            val sub = dao.getAllSubscriptionsOnce().firstOrNull { it.deviceId == deviceId }
-                ?: return Result.failure(IllegalArgumentException("Subscription not found"))
-            val baseTime = maxOf(sub.expiresAt ?: now, now)
-            dao.insertSubscriptions(
-                listOf(
-                    sub.copy(
-                        planDuration = planDuration.name,
-                        status = SubscriptionStatus.ACTIVE.name,
-                        startedAt = sub.startedAt ?: now,
-                        expiresAt = planDuration.computeExpiryMillis(baseTime)
-                    )
-                )
-            )
-            return Result.success(Unit)
-        }
         return runCatching {
             val res = apiProvider().renewSubscription(
                 deviceId = deviceId,
@@ -986,12 +785,6 @@ class VeloTrackRepository(
         val cleanReason = reason.trim()
         if (cleanReason.length < 3) {
             return Result.failure(IllegalArgumentException("Suspension reason required"))
-        }
-        if (isLocalFallbackSession()) {
-            val sub = dao.getAllSubscriptionsOnce().firstOrNull { it.deviceId == deviceId }
-                ?: return Result.failure(IllegalArgumentException("Subscription not found"))
-            dao.insertSubscriptions(listOf(sub.copy(status = SubscriptionStatus.SUSPENDED.name)))
-            return Result.success(Unit)
         }
         return runCatching {
             val res = apiProvider().suspendSubscription(
@@ -1013,12 +806,6 @@ class VeloTrackRepository(
         if (cleanReason.length < 3) {
             return Result.failure(IllegalArgumentException("Resume reason required"))
         }
-        if (isLocalFallbackSession()) {
-            val sub = dao.getAllSubscriptionsOnce().firstOrNull { it.deviceId == deviceId }
-                ?: return Result.failure(IllegalArgumentException("Subscription not found"))
-            dao.insertSubscriptions(listOf(sub.copy(status = SubscriptionStatus.ACTIVE.name)))
-            return Result.success(Unit)
-        }
         return runCatching {
             val res = apiProvider().resumeSubscription(
                 deviceId = deviceId,
@@ -1039,22 +826,6 @@ class VeloTrackRepository(
         plateNumber: String,
         serialNumber: String?
     ): Result<Unit> {
-        if (isLocalFallbackSession()) {
-            val device = dao.getAllDevicesOnce().firstOrNull { it.id == deviceId }
-                ?: return Result.failure(IllegalArgumentException("Device not found"))
-            dao.insertDevices(
-                listOf(
-                    device.copy(
-                        vehicleName = vehicleName.trim(),
-                        vehicleType = vehicleType.name,
-                        vehicleIcon = vehicleIcon.key,
-                        plateNumber = plateNumber.trim(),
-                        serialNumber = serialNumber?.trim()
-                    )
-                )
-            )
-            return Result.success(Unit)
-        }
         return runCatching {
             val res = apiProvider().updateVehicleMetadata(
                 deviceId = deviceId,
@@ -1078,25 +849,6 @@ class VeloTrackRepository(
         commandType: TraccarCommandType,
         confirmed: Boolean = true
     ): Result<String> {
-        if (isLocalFallbackSession()) {
-            val now = System.currentTimeMillis()
-            val device = dao.getAllDevicesOnce().firstOrNull { it.id == deviceId }
-                ?: return Result.failure(IllegalArgumentException("Device not found"))
-            val cmd = DeviceCommandEntity(
-                id = "cmd-$now",
-                deviceId = deviceId,
-                traccarDeviceId = device.traccarDeviceId,
-                issuedByUserId = _session.value?.userId ?: "usr-admin-root",
-                issuedByRole = _session.value?.role?.name ?: UserRole.ADMIN.name,
-                commandType = commandType.typeKey,
-                status = "SENT",
-                failureReason = null,
-                sentAt = now,
-                completedAt = now
-            )
-            dao.insertDeviceCommands(listOf(cmd))
-            return Result.success("SENT")
-        }
         return runCatching {
             val res = apiProvider().sendDeviceCommand(
                 deviceId = deviceId,
@@ -1119,9 +871,6 @@ class VeloTrackRepository(
         fromMillis: Long = System.currentTimeMillis() - 86_400_000L,
         toMillis: Long = System.currentTimeMillis()
     ): Result<List<CachedWaypointEntity>> {
-        if (isLocalFallbackSession()) {
-            return Result.success(dao.getWaypointsForDevice(deviceId))
-        }
         val fromIso = Instant.ofEpochMilli(fromMillis).toString()
         val toIso = Instant.ofEpochMilli(toMillis).toString()
 
@@ -1152,11 +901,109 @@ class VeloTrackRepository(
         }
     }
 
-    suspend fun triggerTraccarSyncOnBackend(): Result<Unit> {
-        if (isLocalFallbackSession()) {
-            _serverStatus.value = _serverStatus.value.copy(traccarLastSyncAtMs = System.currentTimeMillis())
-            return Result.success(Unit)
+    suspend fun fetchFleetEvents(
+        fromMillis: Long,
+        toMillis: Long,
+        deviceId: String? = null
+    ): Result<List<ServerFleetEventDto>> {
+        val fromIso = Instant.ofEpochMilli(fromMillis).toString()
+        val toIso = Instant.ofEpochMilli(toMillis).toString()
+        return runCatching {
+            val res = apiProvider().getFleetEvents(fromIso, toIso, deviceId)
+            if (!res.isSuccessful || res.body() == null) {
+                throw IllegalStateException("Events query failed (HTTP ${res.code()})")
+            }
+            res.body()!!
         }
+    }
+
+    suspend fun fetchMileageSummary(
+        fromMillis: Long,
+        toMillis: Long,
+        deviceId: String? = null
+    ): Result<List<ServerMileageSummaryDto>> {
+        val fromIso = Instant.ofEpochMilli(fromMillis).toString()
+        val toIso = Instant.ofEpochMilli(toMillis).toString()
+        return runCatching {
+            val res = apiProvider().getMileageSummary(fromIso, toIso, deviceId)
+            if (!res.isSuccessful || res.body() == null) {
+                throw IllegalStateException("Mileage summary failed (HTTP ${res.code()})")
+            }
+            res.body()!!
+        }
+    }
+
+    suspend fun fetchFleetTelemetry(
+        deviceId: String? = null
+    ): Result<List<ServerFleetTelemetryDto>> {
+        return runCatching {
+            val res = apiProvider().getFleetTelemetry(deviceId)
+            if (!res.isSuccessful || res.body() == null) {
+                throw IllegalStateException("Telemetry query failed (HTTP ${res.code()})")
+            }
+            res.body()!!
+        }
+    }
+
+    suspend fun fetchGeofences(): Result<List<ServerGeofenceDto>> {
+        return runCatching {
+            val res = apiProvider().getGeofences()
+            if (!res.isSuccessful || res.body() == null) {
+                throw IllegalStateException("Geofences query failed (HTTP ${res.code()})")
+            }
+            res.body()!!
+        }
+    }
+
+    suspend fun createGeofence(
+        name: String,
+        description: String = "",
+        area: String,
+        deviceIds: List<String>
+    ): Result<ServerGeofenceDto> {
+        return runCatching {
+            val res = apiProvider().createGeofence(
+                CreateGeofenceRequestDto(
+                    name = name.trim(),
+                    description = description.trim(),
+                    area = area.trim(),
+                    deviceIds = deviceIds
+                )
+            )
+            if (!res.isSuccessful || res.body() == null) {
+                throw IllegalStateException("Create geofence failed (HTTP ${res.code()})")
+            }
+            res.body()!!
+        }
+    }
+
+    suspend fun deleteGeofence(geofenceId: Long): Result<Boolean> {
+        return runCatching {
+            val res = apiProvider().deleteGeofence(geofenceId)
+            if (!res.isSuccessful || res.body() == null) {
+                throw IllegalStateException("Delete geofence failed (HTTP ${res.code()})")
+            }
+            res.body()!!.deleted
+        }
+    }
+
+    suspend fun createDeviceShareLink(
+        deviceId: String,
+        expiresInHours: Int = 24
+    ): Result<ServerDeviceShareResponseDto> {
+        return runCatching {
+            val res = apiProvider().createDeviceShare(
+                deviceId = deviceId,
+                request = CreateDeviceShareRequestDto(expiresInHours = expiresInHours)
+            )
+            if (!res.isSuccessful || res.body() == null) {
+                throw IllegalStateException("Create share link failed (HTTP ${res.code()})")
+            }
+            res.body()!!
+        }
+    }
+
+    suspend fun triggerTraccarSyncOnBackend(): Result<Unit> {
         return runCatching {
             val res = apiProvider().triggerTraccarSync()
             if (!res.isSuccessful) {

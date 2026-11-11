@@ -13,11 +13,11 @@ const tabItems: Array<{ id: Tab; label: string; icon: typeof Bell }> = [
   { id: "sharing", label: "مشاركة الموقع", icon: Share2 }
 ];
 const eventNames: Record<string, string> = {
-  deviceOnline: "الجهاز اتصل", deviceOffline: "الجهاز غير متصل",
-  deviceMoving: "بدأت الحركة", deviceStopped: "توقف",
-  geofenceEnter: "دخول نطاق جغرافي", geofenceExit: "خروج من نطاق جغرافي",
-  ignitionOn: "فتح الكونتاكت", ignitionOff: "إغلاق الكونتاكت",
-  alarm: "إنذار", overspeed: "تجاوز السرعة", commandResult: "نتيجة أمر"
+  deviceOnline: "متصل", deviceOffline: "غير متصل",
+  deviceMoving: "متحرك", deviceStopped: "متوقف",
+  geofenceEnter: "دخول منطقة", geofenceExit: "خروج منطقة",
+  ignitionOn: "كونتاكت مفتوح", ignitionOff: "كونتاكت مغلق",
+  alarm: "إنذار", overspeed: "تجاوز سرعة", commandResult: "نتيجة أمر"
 };
 const sensorNames: Record<string, string> = {
   batteryLevel: "مستوى البطارية", battery: "البطارية", power: "مصدر الطاقة",
@@ -25,8 +25,8 @@ const sensorNames: Record<string, string> = {
   fuel: "الوقود", fuelLevel: "مستوى الوقود", fuelPercentage: "نسبة الوقود",
   fuelConsumption: "استهلاك الوقود", odometer: "عداد المسافة", totalDistance: "المسافة الكلية",
   temperature: "درجة الحرارة", door: "الأبواب", ignition: "الكونتاكت", motion: "الحركة",
-  alarm: "الإنذار", satellites: "عدد الأقمار", sat: "عدد الأقمار",
-  rssi: "قوة الإشارة", gsmSignal: "إشارة الشبكة", charge: "الشحن",
+  alarm: "الإنذار", satellites: "الأقمار", sat: "الأقمار",
+  rssi: "الإشارة", gsmSignal: "إشارة الشبكة", charge: "الشحن",
   charging: "حالة الشحن", voltage: "الجهد", engineHours: "ساعات المحرك"
 };
 function dateInput(date: Date) {
@@ -128,7 +128,7 @@ export default function FleetOperationsPage({ token, devices, isAdmin, onNotify 
         name: zoneName, description: zoneDescription, area: zoneArea, deviceIds: [zoneDeviceId]
       });
       setZoneName(""); setZoneDescription(""); setZoneArea("");
-      await loadZones(); onNotify("تم إنشاء المنطقة وربطها بالمركبة");
+      await loadZones(); onNotify("تم إنشاء المنطقة");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "تعذر إنشاء المنطقة");
     } finally { setLoading(false); }
@@ -148,7 +148,7 @@ export default function FleetOperationsPage({ token, devices, isAdmin, onNotify 
     try {
       const result = await api.createDeviceShare(token, shareDeviceId, shareHours);
       setShareUrl(result.shareUrl); setShareExpiry(result.expiresAt);
-      onNotify("تم إنشاء رابط مشاركة مؤقت");
+      onNotify("تم إنشاء رابط المشاركة");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "تعذر إنشاء رابط المشاركة");
     } finally { setLoading(false); }
@@ -157,9 +157,8 @@ export default function FleetOperationsPage({ token, devices, isAdmin, onNotify 
   return (
     <section className="fleet-operations">
       <header className="fleet-operations-head">
-        <div><span className="eyebrow">VELOTRACK / FLEET INTELLIGENCE</span><h1>مركز الأسطول</h1>
-          <p>التنبيهات والمناطق الجغرافية والحساسات وتقارير المسافة ومشاركة الموقع.</p></div>
-        <span className="fleet-scope-pill">{availableDevices.length} مركبة متاحة</span>
+        <div><span className="eyebrow">VELOTRACK / FLEET INTELLIGENCE</span><h1>مركز الأسطول</h1></div>
+        <span className="fleet-scope-pill">{availableDevices.length} مركبة</span>
       </header>
       <div className="fleet-tabs" role="tablist" aria-label="أدوات الأسطول">
         {tabItems.map((item) => { const Icon = item.icon; return (
@@ -176,7 +175,7 @@ export default function FleetOperationsPage({ token, devices, isAdmin, onNotify 
       {(tab === "alerts" || tab === "mileage" || tab === "telemetry") && (
         <div className="panel fleet-filter-panel">
           <label>المركبة<select value={deviceId} onChange={(event) => setDeviceId(event.target.value)}>
-            <option value="">كل المركبات المصرح بها</option>
+            <option value="">كل المركبات</option>
             {availableDevices.map((bundle) => <option key={bundle.device.id} value={bundle.device.id}>
               {bundle.device.vehicleName} · {bundle.device.plateNumber || bundle.device.imei}
             </option>)}
@@ -187,69 +186,65 @@ export default function FleetOperationsPage({ token, devices, isAdmin, onNotify 
           </>}
           <button type="button" className="primary-btn" disabled={loading}
             onClick={() => { if (tab === "alerts") void loadEvents(); else if (tab === "mileage") void loadMileage(); else void loadTelemetry(); }}>
-            <RefreshCw size={15} />{loading ? "جارٍ التحميل..." : "تحديث البيانات"}
+            <RefreshCw size={15} />{loading ? "..." : "تحديث"}
           </button>
         </div>
       )}
 
       {tab === "alerts" && <section className="panel fleet-content-panel">
-        <div className="panel-head"><div><h3>سجل التنبيهات والأحداث</h3><small>أحداث فعلية من Traccar للفترة المحددة</small></div>
-          <span className="muted-label">{events.length} حدث</span></div>
-        {!events.length ? <div className="fleet-empty"><Bell size={24} /><b>لا توجد أحداث معروضة</b>
-          <span>حدد الفترة ثم حدّث البيانات</span></div> :
-          <div className="data-table-wrap"><table><thead><tr><th>الحدث</th><th>المركبة</th><th>التاريخ</th><th>تفاصيل</th></tr></thead>
+        <div className="panel-head"><h3>التنبيهات والأحداث</h3>
+          <span className="muted-label">{events.length}</span></div>
+        {!events.length ? <div className="fleet-empty"><Bell size={24} /><b>لا توجد أحداث</b></div> :
+          <div className="data-table-wrap"><table><thead><tr><th>الحدث</th><th>المركبة</th><th>التاريخ</th><th>الحالة</th></tr></thead>
             <tbody>{events.map((event) => <tr key={event.id}>
               <td><span className="fleet-event-tag">{eventNames[event.type] ?? event.type}</span></td>
               <td>{event.vehicleName}</td><td>{dateText(event.eventTime)}</td>
-              <td>{event.geofenceId ? "منطقة رقم " + event.geofenceId :
+              <td>{event.geofenceId ? `#${event.geofenceId}` :
                 event.attributes?.alarm ? String(event.attributes.alarm) : "—"}</td>
             </tr>)}</tbody></table></div>}
       </section>}
 
       {tab === "geofences" && <div className="fleet-module-grid">
         <section className="panel fleet-content-panel"><div className="panel-head">
-          <div><h3>المناطق المرتبطة بالأسطول</h3><small>المناطق المسندة إلى مركبات حسابك فقط</small></div>
+          <h3>المناطق الجغرافية</h3>
           <button type="button" className="icon-btn" onClick={() => void loadZones()} aria-label="تحديث"><RefreshCw size={16} /></button>
         </div>
-        {!zones.length ? <div className="fleet-empty"><MapPinned size={24} /><b>لا توجد مناطق مرتبطة</b></div> :
+        {!zones.length ? <div className="fleet-empty"><MapPinned size={24} /><b>لا توجد مناطق</b></div> :
           <div className="fleet-zone-list">{zones.map((zone) => <article className="fleet-zone-card" key={zone.id}>
-            <div><b>{zone.name}</b><p>{zone.description || "بدون وصف"}</p>
+            <div><b>{zone.name}</b>{zone.description && <p>{zone.description}</p>}
               <small>{zone.vehicleNames.join("، ")}</small><code>{zone.area}</code></div>
             {isAdmin && <button type="button" className="icon-btn danger" onClick={() => void deleteZone(zone.id)} aria-label="حذف المنطقة"><Trash2 size={16} /></button>}
           </article>)}</div>}
         </section>
         {isAdmin && <section className="panel fleet-content-panel"><div className="panel-head">
-          <div><h3>إضافة منطقة جديدة</h3><small>دائرة أو مضلع بصيغة WKT</small></div><Plus size={18} /></div>
+          <h3>إضافة منطقة</h3><Plus size={18} /></div>
           <form className="fleet-zone-form" onSubmit={createZone}>
-            <label>اسم المنطقة<input value={zoneName} onChange={(event) => setZoneName(event.target.value)} maxLength={100} required /></label>
-            <label>الوصف<input value={zoneDescription} onChange={(event) => setZoneDescription(event.target.value)} maxLength={500} /></label>
+            <label>الاسم<input value={zoneName} onChange={(event) => setZoneName(event.target.value)} maxLength={100} required /></label>
+            <label>الرمز<input value={zoneDescription} onChange={(event) => setZoneDescription(event.target.value)} maxLength={500} /></label>
             <label>المركبة<select value={zoneDeviceId} onChange={(event) => setZoneDeviceId(event.target.value)} required>
               <option value="">اختر مركبة</option>{availableDevices.map((bundle) => <option key={bundle.device.id} value={bundle.device.id}>{bundle.device.vehicleName}</option>)}
             </select></label>
-            <label>حدود المنطقة (WKT)<textarea value={zoneArea} onChange={(event) => setZoneArea(event.target.value)}
-              placeholder={"CIRCLE (31.2357 30.0444, 250)"} rows={4} required /></label>
-            <small className="fleet-form-hint">الدائرة: CIRCLE (خط الطول خط العرض، نصف القطر بالمتر). المضلع: POLYGON ((lon lat, lon lat, lon lat, lon lat)). أغلق المضلع بإعادة نقطة البداية.</small>
-            <button className="primary-btn" type="submit" disabled={loading || !zoneDeviceId}><Plus size={15} />إنشاء وربط المنطقة</button>
+            <label>WKT<textarea value={zoneArea} onChange={(event) => setZoneArea(event.target.value)}
+              placeholder={"CIRCLE (31.2357 30.0444, 250)"} rows={3} required /></label>
+            <button className="primary-btn" type="submit" disabled={loading || !zoneDeviceId}><Plus size={15} />حفظ</button>
           </form>
         </section>}
       </div>}
 
       {tab === "telemetry" && <section className="panel fleet-content-panel">
-        <div className="panel-head"><div><h3>القراءات التي أرسلها الجهاز</h3><small>لا تظهر قيمة إلا إذا وصلت فعليًا من الجهاز</small></div><Waves size={18} /></div>
-        {!telemetry.length ? <div className="fleet-empty"><Activity size={24} /><b>لا توجد بيانات حساسات</b>
-          <span>قد لا يدعم الجهاز هذه الحساسات أو لم يرسلها بعد</span></div> :
+        <div className="panel-head"><h3>بيانات الحساسات</h3><Waves size={18} /></div>
+        {!telemetry.length ? <div className="fleet-empty"><Activity size={24} /><b>لا توجد قراءات</b></div> :
           <div className="fleet-telemetry-list">{telemetry.map((item) => <article className="fleet-telemetry-card" key={item.deviceId}>
-            <header><b>{item.vehicleName}</b><small>آخر قراءة: {dateText(item.reportedAtMs)}</small></header>
-            {!Object.keys(item.values).length ? <p className="muted-label">لا توجد قراءات إضافية في آخر تحديث</p> :
+            <header><b>{item.vehicleName}</b><small>{dateText(item.reportedAtMs)}</small></header>
+            {!Object.keys(item.values).length ? <p className="muted-label">—</p> :
               <div className="fleet-telemetry-grid">{Object.entries(item.values).map(([key, value]) =>
                 <div key={key}><span>{sensorNames[key] ?? key}</span><b>{valueText(value)}</b></div>)}</div>}
           </article>)}</div>}
       </section>}
 
       {tab === "mileage" && <section className="panel fleet-content-panel">
-        <div className="panel-head"><div><h3>ملخص المسافة والاستهلاك</h3><small>من تقارير Traccar للفترة المحددة</small></div><FileBarChart size={18} /></div>
-        {!mileage.length ? <div className="fleet-empty"><FileBarChart size={24} /><b>لا يوجد تقرير معروض</b>
-          <span>حدد الفترة ثم اضغط تحديث البيانات</span></div> :
+        <div className="panel-head"><h3>ملخص المسافة</h3><FileBarChart size={18} /></div>
+        {!mileage.length ? <div className="fleet-empty"><FileBarChart size={24} /><b>لا توجد بيانات</b></div> :
           <div className="data-table-wrap"><table><thead><tr><th>المركبة</th><th>المسافة كم</th><th>متوسط السرعة</th><th>أقصى سرعة</th><th>الوقود لتر</th><th>ساعات المحرك</th></tr></thead>
             <tbody>{mileage.map((row) => <tr key={row.deviceId}><td>{row.vehicleName}</td><td>{row.distanceKm ?? "—"}</td>
               <td>{row.averageSpeedKmh ?? "—"} كم/س</td><td>{row.maxSpeedKmh ?? "—"} كم/س</td>
@@ -257,33 +252,30 @@ export default function FleetOperationsPage({ token, devices, isAdmin, onNotify 
       </section>}
 
       {tab === "sharing" && <section className="panel fleet-content-panel fleet-sharing-panel">
-        <div className="panel-head"><div><h3>مشاركة موقع المركبة</h3><small>رابط مؤقت ينتهي تلقائيًا في الموعد المحدد</small></div><Share2 size={18} /></div>
+        <div className="panel-head"><h3>مشاركة الموقع</h3><Share2 size={18} /></div>
         <div className="fleet-share-form">
           <label>المركبة<select value={shareDeviceId} onChange={(event) => setShareDeviceId(event.target.value)}>
             <option value="">اختر مركبة</option>{availableDevices.map((bundle) => <option key={bundle.device.id} value={bundle.device.id}>{bundle.device.vehicleName}</option>)}
           </select></label>
-          <label>مدة الرابط<select value={shareHours} onChange={(event) => setShareHours(Number(event.target.value))}>
-            <option value={1}>ساعة واحدة</option><option value={6}>6 ساعات</option><option value={12}>12 ساعة</option>
-            <option value={24}>24 ساعة</option><option value={72}>3 أيام</option><option value={168}>7 أيام</option>
+          <label>المدة<select value={shareHours} onChange={(event) => setShareHours(Number(event.target.value))}>
+            <option value={1}>1 س</option><option value={6}>6 س</option><option value={12}>12 س</option>
+            <option value={24}>24 س</option><option value={72}>3 ي</option><option value={168}>7 ي</option>
           </select></label>
-          <button type="button" className="primary-btn" onClick={() => void createShare()} disabled={loading || !shareDeviceId}><Share2 size={15} />إنشاء رابط مؤقت</button>
+          <button type="button" className="primary-btn" onClick={() => void createShare()} disabled={loading || !shareDeviceId}><Share2 size={15} />إنشاء رابط</button>
         </div>
-        {shareUrl && <div className="fleet-share-result"><b>رابط المشاركة جاهز</b><code dir="ltr">{shareUrl}</code>
-          <span>ينتهي في {dateText(shareExpiry)}</span>
+        {shareUrl && <div className="fleet-share-result"><code dir="ltr">{shareUrl}</code>
+          <span>{dateText(shareExpiry)}</span>
           <button type="button" className="secondary-btn" onClick={() => {
             void navigator.clipboard?.writeText(shareUrl).then(
-              () => onNotify("تم نسخ رابط المشاركة"),
-              () => onNotify("انسخ الرابط يدويًا")
+              () => onNotify("تم النسخ"),
+              () => onNotify("تعذر النسخ")
             );
-          }}><Copy size={15} />نسخ الرابط</button>
+          }}><Copy size={15} />نسخ</button>
         </div>}
-        <p className="fleet-form-hint">يتطلب TRACCAR_PUBLIC_URL بعنوان HTTPS عام. لا يكشف عنوان Traccar الداخلي.</p>
       </section>}
 
-      {loading && <div className="fleet-loading">جارٍ تنفيذ الطلب...</div>}
-      {!availableDevices.length && <div className="fleet-empty fleet-global-empty"><Activity size={24} /><b>لا توجد مركبات متاحة</b>
-        <span>تحقق من ملكية المركبة وحالة الاشتراك</span></div>}
-      <footer className="fleet-page-foot">Traccar هو مصدر بيانات GPS، وVeloTrack يدير الحسابات والاشتراكات.</footer>
+      {loading && <div className="fleet-loading">...</div>}
+      {!availableDevices.length && <div className="fleet-empty fleet-global-empty"><Activity size={24} /><b>لا توجد مركبات</b></div>}
     </section>
   );
 }

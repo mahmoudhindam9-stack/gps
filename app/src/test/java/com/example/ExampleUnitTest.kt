@@ -266,8 +266,70 @@ class ExampleUnitTest {
 
     @Test
     fun githubReleaseSemverComparison_identifiesNewerReleases() {
-        assertEquals(1, SimAndImeiValidator.compareSemver("v1.2.0", "1.1.0"))
-        assertEquals(0, SimAndImeiValidator.compareSemver("v1.1.0", "1.1.0"))
-        assertEquals(-1, SimAndImeiValidator.compareSemver("1.0.9", "1.1.0"))
+        assertEquals(1, SimAndImeiValidator.compareSemver("v1.3.0", "1.2.0"))
+        assertEquals(0, SimAndImeiValidator.compareSemver("v1.2.0", "1.2.0"))
+        assertEquals(-1, SimAndImeiValidator.compareSemver("1.1.0", "1.2.0"))
+
+        val defaultRelease = com.example.data.model.GitHubReleaseState()
+        assertEquals("1.2.0", defaultRelease.currentVersion)
+        assertEquals("v1.2.0", defaultRelease.tagName)
+        assertEquals("003_customer_device_guard_and_fleet_ops", defaultRelease.schemaVersion)
+    }
+
+    @Test
+    fun fleetIntelligenceDtos_deserializeRealTraccarPayloadsCorrectly() {
+        val moshi = com.example.data.network.VeloTrackNetworkClient.getMoshi()
+
+        val eventJson = """
+            {
+              "id": 301,
+              "type": "geofenceEnter",
+              "eventTime": "2026-11-10T09:30:00.000Z",
+              "eventTimeMs": 1794303000000,
+              "deviceId": "dev-1",
+              "vehicleName": "Fleet Truck 01",
+              "plateNumber": "CAI-111",
+              "traccarDeviceId": 800,
+              "geofenceId": 50
+            }
+        """.trimIndent()
+        val eventDto = moshi.adapter(com.example.data.network.ServerFleetEventDto::class.java).fromJson(eventJson)
+        assertNotNull(eventDto)
+        assertEquals("geofenceEnter", eventDto!!.type)
+        assertEquals(50L, eventDto.geofenceId)
+
+        val mileageJson = """
+            {
+              "deviceId": "dev-1",
+              "vehicleName": "Fleet Truck 01",
+              "plateNumber": "CAI-111",
+              "traccarDeviceId": 800,
+              "distanceMeters": 45250.0,
+              "distanceKm": 45.25,
+              "averageSpeedKmh": 37.0,
+              "maxSpeedKmh": 74.1,
+              "spentFuelLiters": 4.6,
+              "engineHours": 2.0
+            }
+        """.trimIndent()
+        val mileageDto = moshi.adapter(com.example.data.network.ServerMileageSummaryDto::class.java).fromJson(mileageJson)
+        assertNotNull(mileageDto)
+        assertEquals(45.25, mileageDto!!.distanceKm, 0.01)
+        assertEquals(2.0, mileageDto.engineHours!!, 0.01)
+
+        val shareJson = """
+            {
+              "deviceId": "dev-1",
+              "vehicleName": "Fleet Truck 01",
+              "token": "share-token-xyz",
+              "shareUrl": "https://track.velotrack.org/?token=share-token-xyz",
+              "expiresAt": "2026-11-11T10:00:00.000Z",
+              "expiresAtMs": 1794391200000
+            }
+        """.trimIndent()
+        val shareDto = moshi.adapter(com.example.data.network.ServerDeviceShareResponseDto::class.java).fromJson(shareJson)
+        assertNotNull(shareDto)
+        assertEquals("https://track.velotrack.org/?token=share-token-xyz", shareDto!!.shareUrl)
     }
 }
+
