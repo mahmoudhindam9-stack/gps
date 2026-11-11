@@ -33,10 +33,19 @@ services:
       DATABASE_USER: traccar
       DATABASE_PASSWORD: ${TRACCAR_DB_PASSWORD:?Set TRACCAR_DB_PASSWORD in deployment/traccar/.env}
     ports:
-      # Keep the web UI and REST API private. Access through SSH tunnel or a secured backend/proxy.
-      - "127.0.0.1:8082:8082"
-      # GT06 / Concox GT06N protocol listener.
-      - "${GT06_BIND_ADDRESS:-0.0.0.0}:5023:5023/tcp"
+      # Traccar web UI/REST API is reachable only from the VPS and private Docker networks.
+      - "127.0.0.1:8082:8082/tcp"
+      # Every network-listener port in the pinned Traccar 6.17.0 ProtocolConfig.
+      # 5175 is intentionally excluded: no protocol is assigned to it in 6.17.0.
+      # Publish both transports at the ingress layer; each Traccar protocol binds only the transport(s) it implements.
+      - "${GPS_INGRESS_BIND_ADDRESS:-0.0.0.0}:5001-5174:5001-5174/tcp"
+      - "${GPS_INGRESS_BIND_ADDRESS:-0.0.0.0}:5001-5174:5001-5174/udp"
+      - "${GPS_INGRESS_BIND_ADDRESS:-0.0.0.0}:5176-5268:5176-5268/tcp"
+      - "${GPS_INGRESS_BIND_ADDRESS:-0.0.0.0}:5176-5268:5176-5268/udp"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     volumes:
       - traccar-logs:/opt/traccar/logs
       - ./traccar.xml:/opt/traccar/conf/traccar.xml:ro

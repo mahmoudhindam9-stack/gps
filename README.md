@@ -4,56 +4,41 @@ VeloTrack is an Android GPS fleet-management client. The tracking engine is prov
 
 ## Current integration foundation
 
-- Traccar Server deployment: `deployment/traccar/`
-- GT06 protocol listener for Concox GT06N: TCP port `5023`
-- Traccar REST/API and web UI: bound to loopback `127.0.0.1:8082` by default
-- Traccar status events: enabled in `deployment/traccar/traccar.xml`
-- Traccar telemetry database: dedicated TimescaleDB/PostgreSQL container and volume
-- Permanent UI requirements: `docs/PRODUCT_UI_RULES.md`
-- Android/backend completion instructions: `docs/GEMINI_COMPLETION_PROMPT.md`
+- Traccar Server is pinned to 6.17.0 in `deployment/traccar/`.
+- The official 6.17.0 protocol registry contains 268 protocol classes: 267 non-zero network listeners plus Orbcomm (port 0, no inbound listener).
+- Default device listener ports are 5001–5174 and 5176–5268; TCP and UDP ingress are published for the range. Port 5175 is intentionally excluded.
+- The full protocol-to-default-port inventory is `deployment/traccar/protocol-ports.json`.
+- Traccar web/API port 8082 is loopback-only; the telemetry database port 5432 is private.
+- Traccar status events are enabled in `deployment/traccar/traccar.xml`.
+- The Traccar telemetry database is separate from the verified cloud Supabase business database.
+- VeloTrack backend and Traccar share the private Docker network `velotrack-shared`.
+- Android/backend completion instructions: `docs/GEMINI_COMPLETION_PROMPT.md`.
 
-**Important:** This foundation adds the real Traccar server deployment. It does not yet complete the Android-to-backend integration, VeloTrack subscription service, or bidirectional SMS gateway. The existing Android prototype must not be treated as production-ready until the remaining work in the handoff prompt is completed and tested.
+**Compatibility boundary:** this config exposes the complete set of network listeners built into Traccar 6.17.0. It does not promise that every proprietary clone or firmware variant is compatible; the exact device protocol and packet decoding still require validation.
 
-## Start the Traccar server
+## Start the VeloTrack VPS stack
 
-On a Linux VPS with Docker Engine and the Docker Compose plugin:
+On a Linux VPS with Docker Engine, Docker Compose, Node.js/npm, curl, and an OS/provider firewall:
 
-```bash
-cd deployment/traccar
-cp .env.example .env
-```
+1. Copy `deployment/traccar/.env.example` to `deployment/traccar/.env` and set a unique long `TRACCAR_DB_PASSWORD`.
+2. Copy `backend/.env.example` to `backend/.env`. Keep the verified Supabase URL and populate the private Supabase secret key, PostgreSQL connection URI, application JWT secret, and Traccar administrator credentials through the server secret store or the ignored `.env` file.
+3. Run from the repository root: `sudo ./deployment/vps-deploy.sh`.
+4. Check the containers with `docker compose --env-file deployment/traccar/.env -f deployment/traccar/compose.yaml ps` and `docker compose --env-file backend/.env -f backend/compose.yaml ps`.
+5. The deploy script verifies the protocol manifest, validates both Compose files, applies additive firewall rules where UFW/firewalld is active, and checks Traccar and backend health endpoints.
 
-Edit `.env` and set a strong unique `TRACCAR_DB_PASSWORD`. You can generate one with:
-
-```bash
-openssl rand -hex 32
-```
-
-Validate and start:
-
-```bash
-docker compose config
-docker compose up -d
-docker compose ps
-```
-
-Check server health on the VPS:
-
-```bash
-curl --fail http://127.0.0.1:8082/api/health
-```
-
-The expected successful response is `OK`.
+Do not deploy a second self-hosted Supabase stack. The backend connects to the already verified cloud project `ixazqslcmqjmndhiyhux`.
 
 ## Network and tracker setup
 
-- Allow inbound **TCP 5023** in the VPS firewall for the GT06 protocol.
-- Configure the physical GT06N with the VPS DNS name/IP and port `5023`, using the correct command syntax for its actual firmware.
-- Do not expose Traccar's HTTP/API port `8082` or the database port publicly. Port `8082` is loopback-only in this Compose file.
-- For temporary browser administration, use an SSH tunnel: `ssh -L 8082:127.0.0.1:8082 user@your-vps`, then open `http://127.0.0.1:8082` locally.
-- Use HTTPS through a reverse proxy and a properly authenticated VeloTrack backend before enabling remote app access.
+- Open TCP 80/443 for the Caddy HTTPS reverse proxy.
+- Open TCP and UDP 5001–5174 and 5176–5268 in both the VPS OS firewall and the cloud/provider network firewall.
+- Do not open 5175; no protocol listener uses it in the pinned Traccar 6.17.0 registry.
+- Do not expose Traccar web/API port 8082, backend port 3000, or database port 5432 publicly. The Traccar host binding remains `127.0.0.1:8082` and its database has no public port mapping.
+- Configure each GPS tracker with its matching protocol's default port from `deployment/traccar/protocol-ports.json`; confirm its protocol in https://www.traccar.org/devices/.
+- For Concox GT06/GT06N the protocol is `gt06`, port 5023. Other device families use their own ports.
+- Do not infer UDP reachability from a TCP test. Verify real packets and decoded positions for each representative device family.
 
-Traccar lists **Concox GT06N** under protocol `gt06` on port `5023`. This confirms protocol-family support, not the exact firmware's SMS command syntax or behavior. Test the physical tracker before marking any SMS profile as verified.
+See `deployment/traccar/UNIVERSAL-DEVICE-SUPPORT.md` for the protocol inventory, ingress ranges, and validation procedure.
 
 ## Source-of-truth rules
 
