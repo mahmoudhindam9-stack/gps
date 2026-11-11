@@ -28,6 +28,21 @@ On a Linux VPS with Docker Engine, Docker Compose, Node.js/npm, curl, and an OS/
 
 Do not deploy a second self-hosted Supabase stack. The backend connects to the already verified cloud project `ixazqslcmqjmndhiyhux`.
 
+## Docker userland proxy (important for the large port range)
+
+Publishing hundreds of TCP/UDP ports can spawn one `docker-proxy` process per published port when Docker's userland proxy is enabled. Traccar's official Docker guidance recommends disabling it for this port-range deployment to reduce memory use and connection-related issues:
+
+https://www.traccar.org/docker/
+
+The example fragment is in `deployment/docker-daemon.json.example`. Before production deployment:
+
+1. Inspect the existing `/etc/docker/daemon.json` (if it exists).
+2. Merge the key `"userland-proxy": false` into the existing JSON object. Do not overwrite unrelated Docker settings or copy the example over an existing file.
+3. Validate the JSON and schedule a maintenance window. Restarting Docker with `sudo systemctl restart docker` interrupts running containers; restart the VeloTrack Compose stacks afterward.
+4. Verify the setting and running containers before opening the GPS ingress firewall ranges.
+
+The automated deployment script intentionally does not rewrite the global Docker daemon configuration or restart Docker because that can affect unrelated workloads on the VPS.
+
 ## Network and tracker setup
 
 - Open TCP 80/443 for the Caddy HTTPS reverse proxy.

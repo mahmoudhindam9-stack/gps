@@ -28,6 +28,21 @@ Traccar's official device catalogue covers many manufacturers and thousands of d
 - Configure the tracker with the VPS public IP/DNS name and that protocol's port. Keep the device's unique ID/IMEI consistent with the VeloTrack registration.
 - Test real packets, reconnection, no-fix heartbeat, and valid GPS fix separately. A successful TCP connection alone is not proof that a packet was decoded or a device was activated.
 
+## Docker userland proxy (important for the large port range)
+
+Publishing hundreds of TCP/UDP ports can spawn one `docker-proxy` process per published port when Docker's userland proxy is enabled. Traccar's official Docker guidance recommends disabling it for this port-range deployment to reduce memory use and connection-related issues:
+
+https://www.traccar.org/docker/
+
+The example fragment is in `deployment/docker-daemon.json.example`. Before production deployment:
+
+1. Inspect the existing `/etc/docker/daemon.json` (if it exists).
+2. Merge the key `"userland-proxy": false` into the existing JSON object. Do not overwrite unrelated Docker settings or copy the example over an existing file.
+3. Validate the JSON and schedule a maintenance window. Restarting Docker with `sudo systemctl restart docker` interrupts running containers; restart the VeloTrack Compose stacks afterward.
+4. Verify the setting and running containers before opening the GPS ingress firewall ranges.
+
+The automated deployment script intentionally does not rewrite the global Docker daemon configuration or restart Docker because that can affect unrelated workloads on the VPS.
+
 ## Validation
 
 Run from the repository root:

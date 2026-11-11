@@ -135,6 +135,12 @@ Read and enforce `docs/PRODUCT_UI_RULES.md` in every change.
 
 **No explanatory text under/around buttons or sections.** No subtitles, descriptions, helper paragraphs, instructional empty-state copy, or tooltips explaining ordinary controls. Use concise titles, short button labels, compact status text and icons. Keep developer/setup documentation in Markdown files, not in the app UI. Accessibility semantics are still required.
 
+### Docker daemon performance for wide port publishing
+
+Read the official Traccar Docker guidance: https://www.traccar.org/docker/.
+The multi-port TCP/UDP ingress can spawn one docker-proxy process per published port when Docker userland proxy is enabled. Inspect `/etc/docker/daemon.json` and ensure `"userland-proxy": false` for the production VPS.
+Do not overwrite an existing daemon.json. Merge this key while preserving all other settings, validate the JSON, explain that restarting Docker interrupts all containers, and only perform the restart during a safe maintenance window. The deployment script deliberately does not mutate global Docker daemon configuration.
+
 ## Required validation and delivery
 
 1. Run a source-wide search for fake/mock/demo/simulation paths and remove or isolate every production occurrence.
