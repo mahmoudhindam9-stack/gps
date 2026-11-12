@@ -153,11 +153,24 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
     val allUsers: StateFlow<List<UserProfileEntity>> = repository.allUsers
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val hasAdminAccount: StateFlow<Boolean> = combine(allUsers, session) { users, activeSession ->
+        activeSession?.role == UserRole.ADMIN ||
+            users.any { it.role.equals("ADMIN", ignoreCase = true) && it.isActive }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
     val deviceProfiles: StateFlow<List<DeviceProfileEntity>> = repository.deviceProfiles
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val visibleDevices: StateFlow<List<DeviceAggregate>> = repository.observeCachedDeviceAggregates()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val visibleDevices: StateFlow<List<DeviceAggregate>> = combine(
+        repository.observeCachedDeviceAggregates(),
+        session
+    ) { list, activeSession ->
+        when {
+            activeSession == null -> emptyList()
+            activeSession.role == UserRole.ADMIN -> list
+            else -> list.filter { it.device.currentCustomerId == activeSession.userId }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val filteredDevices: StateFlow<List<DeviceAggregate>> = combine(visibleDevices, _fleetFilter) { list, filter ->
         val now = System.currentTimeMillis()
@@ -244,6 +257,63 @@ class VeloTrackViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             }.onFailure { err ->
                 showBanner(err.message ?: "Login failed")
+            }
+        }
+    }
+
+    fun bootstrapFirstAdmin(
+        username: String,
+        email: String,
+        fullName: String,
+        phone: String,
+        password: String
+    ) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val res = repository.bootstrapFirstAdmin(
+                username = username,
+                email = email,
+                fullName = fullName,
+                phone = phone,
+                password = password
+            )
+            _isLoading.value = false
+            res.onSuccess { auth ->
+                _currentTab.value = AppTab.MAP
+                val label = auth.username ?: auth.email.ifBlank { auth.fullName }
+                showBanner("First Admin created • $label")
+            }.onFailure { err ->
+                showBanner(err.message ?: "First Admin creation failed")
+            }
+        }
+    }
+
+    fun createAccountInSupabase(
+        fullName: String,
+        username: String,
+        phone: String,
+        email: String = "",
+        password: String,
+        role: UserRole = UserRole.CUSTOMER,
+        onCreated: ((UserProfileEntity) -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val res = repository.createUserAccountInSupabase(
+                fullName = fullName,
+                username = username,
+                phone = phone,
+                email = email,
+                password = password,
+                role = role
+            )
+            _isLoading.value = false
+            res.onSuccess { created ->
+                _activationForm.value = _activationForm.value.copy(customerId = created.id)
+                showBanner("Account created (${created.username ?: created.fullName})")
+                onCreated?.invoke(created)
+            }.onFailure { err ->
+                showBanner(err.message ?: "Account creation failed")
             }
         }
     }

@@ -1,8 +1,20 @@
 {
   "name": "VeloTrack GPS",
   "version": "1.3.0",
+  "releaseCandidate": "1.3.0-rc1",
   "tagName": "v1.3.0",
+  "sourceBaseline": "79393bd102ac546ae5e1622985731763cf2e9f8d",
   "schemaVersion": "003_customer_device_guard_and_schema_migrations",
+  "supabaseProjectId": "ixazqslcmqjmndhiyhux",
+  "traccar": {
+    "version": "6.17.0",
+    "protocolCount": 268,
+    "networkListenerCount": 267,
+    "tcpUdpPortRanges": ["5001-5174", "5176-5268"],
+    "excludedPorts": [5175],
+    "artifact": "velotrack-traccar-deployment-v1.3.0.tar.gz",
+    "protocolInventory": "protocol-ports.json"
+  },
   "android": {
     "applicationId": "com.aistudio.velotrackgps.vtrkqx",
     "versionCode": 4,
@@ -19,5 +31,12 @@
     "artifact": "velotrack-backend-v1.3.0.tar.gz",
     "schemaArtifact": "schema-v1.3.0.sql",
     "migrationsDirectory": "migrations/"
+  },
+  "documentation": {
+    "releaseNotes": "RELEASE_NOTES.md",
+    "installation": "INSTALLATION.md",
+    "backupAndRestore": "BACKUP_AND_RESTORE.md",
+    "testReport": "TEST_REPORT.md",
+    "physicalDeviceAcceptanceChecklist": "PHYSICAL_DEVICE_ACCEPTANCE_CHECKLIST.md"
   }
 }

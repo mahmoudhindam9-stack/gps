@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
@@ -72,6 +73,9 @@ import java.util.Locale
 fun LiveFleetMapScreen(
     devices: List<DeviceAggregate>,
     selectedDeviceId: String?,
+    userLocation: Pair<Double, Double>? = null,
+    hasLocationPermission: Boolean = false,
+    onRequestLocationPermission: () -> Unit = {},
     activeFilter: FleetFilter,
     activeRole: UserRole,
     routePlayback: RoutePlaybackState?,
@@ -106,6 +110,7 @@ fun LiveFleetMapScreen(
             VeloTrackMapLibreCanvas(
                 devices = devices,
                 selectedDeviceId = selectedAggregate?.device?.id,
+                userLocation = userLocation,
                 routeWaypoints = activeWaypoints,
                 activeWaypointIndex = routePlayback?.currentIndex ?: 0,
                 isDarkTheme = isDarkTheme,
@@ -137,6 +142,60 @@ fun LiveFleetMapScreen(
                             selectedLabelColor = MaterialTheme.colorScheme.onPrimary
                         ),
                         modifier = Modifier.testTag("filter_chip_${filter.name.lowercase()}")
+                    )
+                }
+            }
+
+            if (!hasLocationPermission) {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
+                    ),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 12.dp)
+                        .testTag("location_permission_card")
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MyLocation,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Enable location for map",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Button(
+                            onClick = onRequestLocationPermission,
+                            modifier = Modifier
+                                .heightIn(min = 32.dp)
+                                .testTag("grant_location_permission_button")
+                        ) {
+                            Text("Allow", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            } else {
+                IconButton(
+                    onClick = onRequestLocationPermission,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(12.dp)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                        .testTag("my_location_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MyLocation,
+                        contentDescription = "My Location",
+                        tint = if (userLocation != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

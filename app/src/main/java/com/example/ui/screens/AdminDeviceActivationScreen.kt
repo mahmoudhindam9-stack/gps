@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -55,6 +56,7 @@ import com.example.data.model.ActivationStatus
 import com.example.data.model.DeviceAggregate
 import com.example.data.model.PlanDuration
 import com.example.data.model.SimAndImeiValidator
+import com.example.data.model.UserRole
 import com.example.data.model.VehicleIcon
 import com.example.data.model.VehicleType
 import com.example.ui.ActivationFormState
@@ -74,6 +76,7 @@ fun AdminDeviceActivationScreen(
     onSubmitActivation: () -> Unit,
     onSendActivationSms: (String) -> Unit = {},
     onAdminOverride: (String, String) -> Unit,
+    onCreateAccount: (String, String, String, String, String, UserRole) -> Unit = { _, _, _, _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val selectedProfile = profiles.find { it.id == formState.selectedProfileId } ?: profiles.firstOrNull()
@@ -86,6 +89,7 @@ fun AdminDeviceActivationScreen(
 
     var showOverrideDialogForDeviceId by remember { mutableStateOf<String?>(null) }
     var overrideReasonText by remember { mutableStateOf("") }
+    var showCreateAccountDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -298,21 +302,30 @@ fun AdminDeviceActivationScreen(
                     }
                 }
 
-                if (customerList.isNotEmpty()) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    customerList.forEach { cust ->
+                        FilterChip(
+                            selected = formState.customerId == cust.id,
+                            onClick = { onUpdateForm { it.copy(customerId = cust.id) } },
+                            label = { Text(cust.fullName) },
+                            modifier = Modifier.testTag("customer_chip_${cust.id}")
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = { showCreateAccountDialog = true },
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
+                            .heightIn(min = 36.dp)
+                            .testTag("activate_screen_new_account_button")
                     ) {
-                        customerList.forEach { cust ->
-                            FilterChip(
-                                selected = formState.customerId == cust.id,
-                                onClick = { onUpdateForm { it.copy(customerId = cust.id) } },
-                                label = { Text(cust.fullName) },
-                                modifier = Modifier.testTag("customer_chip_${cust.id}")
-                            )
-                        }
+                        Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("New Account", fontSize = 11.sp)
                     }
                 }
 
@@ -342,7 +355,12 @@ fun AdminDeviceActivationScreen(
                 }
 
                 Button(
-                    onClick = onSubmitActivation,
+                    onClick = {
+                        if (formState.selectedProfileId.isBlank() && selectedProfile != null) {
+                            onUpdateForm { it.copy(selectedProfileId = selectedProfile.id) }
+                        }
+                        onSubmitActivation()
+                    },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -370,6 +388,13 @@ fun AdminDeviceActivationScreen(
                 }
             )
         }
+    }
+
+    if (showCreateAccountDialog) {
+        CreateSupabaseAccountDialog(
+            onDismiss = { showCreateAccountDialog = false },
+            onConfirm = onCreateAccount
+        )
     }
 
     if (showOverrideDialogForDeviceId != null) {

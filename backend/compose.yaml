@@ -30,11 +30,14 @@ services:
       SMS_GATEWAY_URL: ${SMS_GATEWAY_URL:-}
       SMS_GATEWAY_TOKEN: ${SMS_GATEWAY_TOKEN:-}
       SMS_WEBHOOK_SECRET: ${SMS_WEBHOOK_SECRET:-}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://velotrack-web.vercel.app}
+      TRACCAR_PUBLIC_URL: ${TRACCAR_PUBLIC_URL:-}
     command: ["node", "src/server.mjs"]
     ports:
       - "127.0.0.1:${PORT:-3000}:${PORT:-3000}"
     volumes:
       - ./:/srv/velotrack-backend:ro
+      - ../deployment/traccar/protocol-ports.json:/srv/velotrack-backend/protocol-ports.json:ro
     networks:
       - velotrack-private
       - velotrack-shared

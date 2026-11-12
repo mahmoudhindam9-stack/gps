@@ -20,7 +20,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [36])
 class ExampleRobolectricTest {
 
     @Test
@@ -450,5 +450,58 @@ class ExampleRobolectricTest {
         migratedDb.close()
         dbFile.delete()
     }
+
+    @Test
+    fun firstAdminBootstrapAndSupabaseAccountCreation_worksAndAllowsSubsequentLogin() = kotlinx.coroutines.test.runTest {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(
+            context,
+            com.example.data.local.VeloTrackDatabase::class.java
+        ).allowMainThreadQueries().build()
+        val dao = db.veloTrackDao()
+        val repo = com.example.data.repository.VeloTrackRepository(
+            dao = dao,
+            context = context,
+            apiProvider = { throw RuntimeException("Simulated HTTP 404 / Static Web Host") }
+        )
+
+        // 1. Create First Admin via bootstrapFirstAdmin
+        val firstAdminRes = repo.bootstrapFirstAdmin(
+            username = "admin",
+            email = "mahmoud.hindam9@gmail.com",
+            fullName = "System Administrator",
+            phone = "",
+            password = "Admin@123456"
+        )
+        assertTrue(firstAdminRes.isSuccess)
+        assertEquals(com.example.data.model.UserRole.ADMIN, firstAdminRes.getOrThrow().role)
+        assertEquals("admin", firstAdminRes.getOrThrow().username)
+
+        // 2. Create another account (Customer) in Supabase & App while logged in as Admin
+        val customerRes = repo.createUserAccountInSupabase(
+            fullName = "Ahmed Fleet",
+            username = "ahmed_fleet",
+            phone = "01012345678",
+            email = "ahmed@velotrack.org",
+            password = "Customer@123",
+            role = com.example.data.model.UserRole.CUSTOMER
+        )
+        assertTrue(customerRes.isSuccess)
+        assertEquals("+201012345678", customerRes.getOrThrow().phone)
+
+        // 3. Log out and verify both First Admin and newly created Customer can log in
+        repo.logout()
+        val customerLogin = repo.login("01012345678", "Customer@123")
+        assertTrue(customerLogin.isSuccess)
+        assertEquals(com.example.data.model.UserRole.CUSTOMER, customerLogin.getOrThrow().role)
+
+        repo.logout()
+        val adminLogin = repo.login("admin", "Admin@123456")
+        assertTrue(adminLogin.isSuccess)
+        assertEquals(com.example.data.model.UserRole.ADMIN, adminLogin.getOrThrow().role)
+
+        db.close()
+    }
 }
+
 

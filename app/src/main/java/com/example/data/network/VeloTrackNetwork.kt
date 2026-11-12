@@ -8,10 +8,14 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 import okhttp3.Cache
 import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONArray
+import org.json.JSONObject
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
@@ -50,6 +54,38 @@ data class LoginResponseDto(
     val token: String,
     val mustChangePassword: Boolean = false,
     val user: ServerUserDto
+)
+
+data class BootstrapStatusResponseDto(
+    val bootstrapped: Boolean = false
+)
+
+data class BootstrapAdminRequestDto(
+    val username: String,
+    val email: String,
+    val fullName: String,
+    val phone: String = "",
+    val password: String,
+    val mustChangePassword: Boolean = false
+)
+
+data class CreateUserAccountRequestDto(
+    val username: String,
+    val phone: String,
+    val fullName: String,
+    val password: String,
+    val role: String = "CUSTOMER",
+    val email: String? = null,
+    val mustChangePassword: Boolean = false
+)
+
+data class SupabaseAuthResult(
+    val success: Boolean,
+    val userId: String? = null,
+    val email: String? = null,
+    val accessToken: String? = null,
+    val errorCode: String? = null,
+    val errorMessage: String? = null
 )
 
 data class WsTicketResponseDto(
@@ -412,6 +448,14 @@ interface VeloTrackApiService {
     @GET("api/v1/health")
     suspend fun getHealth(): Response<ServerHealthResponseDto>
 
+    @GET("api/v1/auth/bootstrap-status")
+    suspend fun getBootstrapStatus(): Response<BootstrapStatusResponseDto>
+
+    @POST("api/v1/auth/bootstrap-admin")
+    suspend fun bootstrapAdmin(
+        @Body request: BootstrapAdminRequestDto
+    ): Response<LoginResponseDto>
+
     @POST("api/v1/auth/login")
     suspend fun login(
         @Body request: LoginRequestDto
@@ -430,6 +474,11 @@ interface VeloTrackApiService {
 
     @GET("api/v1/users")
     suspend fun getUsers(): Response<List<ServerUserDto>>
+
+    @POST("api/v1/users")
+    suspend fun createUserAccount(
+        @Body request: CreateUserAccountRequestDto
+    ): Response<ServerUserDto>
 
     @GET("api/v1/profiles")
     suspend fun getProfiles(): Response<List<ServerDeviceProfileDto>>
@@ -565,6 +614,8 @@ data class GitHubReleaseDto(
 
 object VeloTrackNetworkClient {
     const val DEFAULT_GITHUB_REPO = "mahmoudhindam9-stack/gps"
+    const val SUPABASE_URL = "https://ixazqslcmqjmndhiyhux.supabase.co"
+    const val SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8d2LOE7xILs6dxP7K2TKaw_9hCc8BP_"
     private const val DEFAULT_PUBLIC_HTTPS_API =
         "https://api.velotrack.local/"
 
@@ -647,6 +698,189 @@ object VeloTrackNetworkClient {
             .header("Authorization", "Bearer $token")
             .build()
         return createOkHttpClient(context).newWebSocket(request, listener)
+    }
+
+    fun supabaseSignUp(
+        email: String,
+        password: String,
+        metadata: Map<String, String> = emptyMap()
+    ): SupabaseAuthResult {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .build()
+        val dataObj = JSONObject()
+        metadata.forEach { (k, v) -> dataObj.put(k, v) }
+        val payload = JSONObject()
+            .put("email", email)
+            .put("password", password)
+            .put("data", dataObj)
+        val req = Request.Builder()
+            .url("$SUPABASE_URL/auth/v1/signup")
+            .header("apikey", SUPABASE_PUBLISHABLE_KEY)
+            .header("Content-Type", "application/json")
+            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        return runCatching {
+            client.newCall(req).execute().use { res ->
+                val raw = res.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                if (res.isSuccessful && json != null) {
+                    val userObj = json.optJSONObject("user") ?: json
+                    val userId = userObj.optString("id").takeIf { it.isNotBlank() }
+                    val accessToken = json.optString("access_token").takeIf { it.isNotBlank() }
+                        ?: json.optJSONObject("session")?.optString("access_token")?.takeIf { it.isNotBlank() }
+                    SupabaseAuthResult(
+                        success = true,
+                        userId = userId,
+                        email = userObj.optString("email", email),
+                        accessToken = accessToken
+                    )
+                } else {
+                    val errCode = json?.optString("error_code")?.takeIf { it.isNotBlank() }
+                        ?: json?.optString("error")?.takeIf { it.isNotBlank() }
+                    val errMsg = json?.optString("msg")?.takeIf { it.isNotBlank() }
+                        ?: json?.optString("error_description")?.takeIf { it.isNotBlank() }
+                        ?: "Supabase HTTP ${res.code}"
+                    SupabaseAuthResult(
+                        success = false,
+                        errorCode = errCode,
+                        errorMessage = errMsg
+                    )
+                }
+            }
+        }.getOrElse { err ->
+            SupabaseAuthResult(
+                success = false,
+                errorCode = "NETWORK_ERROR",
+                errorMessage = err.message ?: "Supabase unreachable"
+            )
+        }
+    }
+
+    fun supabaseSignIn(email: String, password: String): SupabaseAuthResult {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .build()
+        val payload = JSONObject()
+            .put("email", email)
+            .put("password", password)
+        val req = Request.Builder()
+            .url("$SUPABASE_URL/auth/v1/token?grant_type=password")
+            .header("apikey", SUPABASE_PUBLISHABLE_KEY)
+            .header("Content-Type", "application/json")
+            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        return runCatching {
+            client.newCall(req).execute().use { res ->
+                val raw = res.body?.string().orEmpty()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                if (res.isSuccessful && json != null) {
+                    val userObj = json.optJSONObject("user")
+                    val userId = userObj?.optString("id")?.takeIf { it.isNotBlank() }
+                    val accessToken = json.optString("access_token").takeIf { it.isNotBlank() }
+                    SupabaseAuthResult(
+                        success = true,
+                        userId = userId,
+                        email = userObj?.optString("email", email) ?: email,
+                        accessToken = accessToken
+                    )
+                } else {
+                    val errCode = json?.optString("error_code")?.takeIf { it.isNotBlank() }
+                        ?: json?.optString("error")?.takeIf { it.isNotBlank() }
+                    val errMsg = json?.optString("msg")?.takeIf { it.isNotBlank() }
+                        ?: json?.optString("error_description")?.takeIf { it.isNotBlank() }
+                        ?: "Supabase HTTP ${res.code}"
+                    SupabaseAuthResult(
+                        success = false,
+                        errorCode = errCode,
+                        errorMessage = errMsg
+                    )
+                }
+            }
+        }.getOrElse { err ->
+            SupabaseAuthResult(
+                success = false,
+                errorCode = "NETWORK_ERROR",
+                errorMessage = err.message ?: "Supabase unreachable"
+            )
+        }
+    }
+
+    fun supabaseUpsertUserProfile(
+        accessToken: String?,
+        user: ServerUserDto
+    ): Boolean {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .build()
+        val payload = JSONObject()
+            .put("id", user.id)
+            .put("username", user.username)
+            .put("email", user.email)
+            .put("phone", user.phone)
+            .put("full_name", user.fullName)
+            .put("role", user.role)
+            .put("must_change_password", user.mustChangePassword)
+            .put("is_active", user.isActive)
+        val reqBuilder = Request.Builder()
+            .url("$SUPABASE_URL/rest/v1/users_profile")
+            .header("apikey", SUPABASE_PUBLISHABLE_KEY)
+            .header("Prefer", "resolution=merge-duplicates,return=minimal")
+            .header("Content-Type", "application/json")
+        if (!accessToken.isNullOrBlank()) {
+            reqBuilder.header("Authorization", "Bearer $accessToken")
+        }
+        val req = reqBuilder
+            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+        return runCatching {
+            client.newCall(req).execute().use { it.isSuccessful }
+        }.getOrDefault(false)
+    }
+
+    fun supabaseFetchUsers(accessToken: String?): List<ServerUserDto> {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .build()
+        val reqBuilder = Request.Builder()
+            .url("$SUPABASE_URL/rest/v1/users_profile?select=*")
+            .header("apikey", SUPABASE_PUBLISHABLE_KEY)
+            .header("Accept", "application/json")
+        if (!accessToken.isNullOrBlank()) {
+            reqBuilder.header("Authorization", "Bearer $accessToken")
+        }
+        return runCatching {
+            client.newCall(reqBuilder.build()).execute().use { res ->
+                if (!res.isSuccessful) return@use emptyList()
+                val raw = res.body?.string().orEmpty()
+                val arr = JSONArray(raw)
+                val list = mutableListOf<ServerUserDto>()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val id = obj.optString("id").takeIf { it.isNotBlank() } ?: continue
+                    list.add(
+                        ServerUserDto(
+                            id = id,
+                            username = obj.optString("username").takeIf { it.isNotBlank() },
+                            email = obj.optString("email").takeIf { it.isNotBlank() },
+                            phone = obj.optString("phone", ""),
+                            fullName = obj.optString("full_name", "User"),
+                            role = obj.optString("role", "CUSTOMER"),
+                            mustChangePassword = obj.optBoolean("must_change_password", false),
+                            isActive = obj.optBoolean("is_active", true),
+                            createdAtMs = System.currentTimeMillis()
+                        )
+                    )
+                }
+                list
+            }
+        }.getOrDefault(emptyList())
     }
 
     fun fetchLatestGitHubRelease(repo: String = DEFAULT_GITHUB_REPO): GitHubReleaseDto? {

@@ -1,6 +1,0 @@
-{
-  "summary":  "Corrected final VeloTrack GPS Self-Hosted Architecture & Implementation Plan incorporating all 8 technical corrections: 16GB RAM provisional production VPS baseline (8GB strictly for pilot/dev), per-transaction Supabase RLS enforcement in NestJS (`SET LOCAL ROLE authenticated` + JWT claims), authenticated Traccar `JSESSIONID` WebSocket bridge with `event.status.enable=true` and state sync on reconnect, APN-free GT06N activation with `TIMER` excluded from default sequence and optional/firmware-specific `GPRSON,1#`, empirical GSM modem verification on Egyptian networks, separate batched 180-day GPS retention maintenance with backups, inline + exact-timestamp WebSocket subscription cutoff (30s sweep as fallback recovery), and MapLibre Native Android >= 11.7.0 with HTTP Range/CORS, visible OSM attribution, and offline PMTiles caching considerations.",
-  "updatedAt":  "2026-11-09T12:14:30.952773673Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

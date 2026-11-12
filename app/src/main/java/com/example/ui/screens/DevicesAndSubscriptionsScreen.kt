@@ -17,11 +17,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -47,6 +49,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.UserProfileEntity
@@ -72,9 +76,11 @@ fun DevicesAndSubscriptionsScreen(
     onSuspendSubscription: (String, String) -> Unit = { _, _ -> },
     onResumeSubscription: (String, String) -> Unit = { _, _ -> },
     onSendCommand: (String, TraccarCommandType) -> Unit = { _, _ -> },
+    onCreateAccount: (String, String, String, String, String, UserRole) -> Unit = { _, _, _, _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val customerAccounts = customers.filter { it.role == UserRole.CUSTOMER.name }
+    var showCreateAccountDialog by remember { mutableStateOf(false) }
     var reassignTargetDevice by remember { mutableStateOf<DeviceAggregate?>(null) }
     var selectedNewCustomerId by remember { mutableStateOf("") }
     var reassignReason by remember { mutableStateOf("") }
@@ -99,15 +105,48 @@ fun DevicesAndSubscriptionsScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(
-                text = "Devices",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            StatusPill(
-                text = "${devices.size}",
-                color = MaterialTheme.colorScheme.primary
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Devices",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                StatusPill(
+                    text = "${devices.size}",
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            if (activeRole == UserRole.ADMIN) {
+                OutlinedButton(
+                    onClick = { showCreateAccountDialog = true },
+                    modifier = Modifier
+                        .heightIn(min = 38.dp)
+                        .testTag("open_create_account_dialog_button")
+                ) {
+                    Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("New Account", fontSize = 11.sp)
+                }
+            }
+        }
+
+        if (activeRole == UserRole.ADMIN && customers.isNotEmpty()) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+            ) {
+                customers.forEach { acc ->
+                    StatusPill(
+                        text = "${acc.role}: ${acc.username ?: acc.fullName}",
+                        color = if (acc.role == UserRole.ADMIN.name) MaterialTheme.colorScheme.primary else StatusMovingEmerald
+                    )
+                }
+            }
         }
 
         LazyColumn(
@@ -144,6 +183,13 @@ fun DevicesAndSubscriptionsScreen(
                 )
             }
         }
+    }
+
+    if (showCreateAccountDialog) {
+        CreateSupabaseAccountDialog(
+            onDismiss = { showCreateAccountDialog = false },
+            onConfirm = onCreateAccount
+        )
     }
 
     if (reassignTargetDevice != null) {
@@ -545,3 +591,114 @@ private fun DeviceManagementCard(
         }
     }
 }
+
+@Composable
+fun CreateSupabaseAccountDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String, String, String, String, String, UserRole) -> Unit
+) {
+    var selectedRole by remember { mutableStateOf(UserRole.CUSTOMER) }
+    var fullName by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Create Supabase Account", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    FilterChip(
+                        selected = selectedRole == UserRole.CUSTOMER,
+                        onClick = { selectedRole = UserRole.CUSTOMER },
+                        label = { Text("Customer") },
+                        modifier = Modifier.testTag("new_account_role_customer")
+                    )
+                    FilterChip(
+                        selected = selectedRole == UserRole.ADMIN,
+                        onClick = { selectedRole = UserRole.ADMIN },
+                        label = { Text("Admin") },
+                        modifier = Modifier.testTag("new_account_role_admin")
+                    )
+                }
+
+                OutlinedTextField(
+                    value = fullName,
+                    onValueChange = { fullName = it },
+                    label = { Text("Full Name") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("new_account_fullname_input")
+                )
+
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("Username") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("new_account_username_input")
+                )
+
+                OutlinedTextField(
+                    value = phone,
+                    onValueChange = { phone = it },
+                    label = { Text("Phone (010...)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("new_account_phone_input")
+                )
+
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email (Optional)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("new_account_email_input")
+                )
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password (8+ chars)") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("new_account_password_input")
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onConfirm(fullName, username, phone, email, password, selectedRole)
+                    onDismiss()
+                },
+                enabled = fullName.isNotBlank() && username.isNotBlank() && phone.isNotBlank() && password.length >= 8,
+                modifier = Modifier.testTag("confirm_create_account_button")
+            ) {
+                Text("Create")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+

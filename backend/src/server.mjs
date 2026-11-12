@@ -6,6 +6,7 @@ import {
   LiveWebSocketHub,
   SupabaseAuthService,
   SupabaseDatabaseAdapter,
+  TRACCAR_PROTOCOL_PORT_MANIFEST,
   TraccarBridgeClient,
   VELOTRACK_APP_VERSION,
   VELOTRACK_SCHEMA_VERSION,
@@ -141,6 +142,8 @@ export function createVeloTrackRequestListener({
             traccarConnected: Boolean(traccarClient.sessionCookie),
             traccarWsConnected: Boolean(traccarClient.wsConnected),
             traccarLastSyncAtMs: traccarClient.lastSyncAtMs,
+            traccarVersion: TRACCAR_PROTOCOL_PORT_MANIFEST.traccarVersion,
+            traccarNetworkListenerCount: TRACCAR_PROTOCOL_PORT_MANIFEST.networkListenerCount,
             smsGatewayConfigured: Boolean(smsGatewayConfigured)
           },
           req,
@@ -165,6 +168,55 @@ export function createVeloTrackRequestListener({
           fetchImpl: releaseFetchImpl
         });
         return sendJson(res, 200, releaseInfo, req, corsAllowedOrigins);
+      }
+
+      if (req.method === "GET" && pathname === "/api/v1/auth/bootstrap-status") {
+        const check = await engine.db.runSystemTransaction(async (tx) => {
+          const stateRes = await tx.query(
+            `SELECT admin_bootstrapped FROM public.bootstrap_state WHERE id = 1`
+          );
+          const adminCountRes = await tx.query(
+            `SELECT id FROM public.users_profile WHERE role = 'ADMIN' AND deleted_at IS NULL LIMIT 1`
+          );
+          return Boolean(stateRes.rows[0]?.admin_bootstrapped || adminCountRes.rows.length > 0);
+        });
+        return sendJson(res, 200, { bootstrapped: check }, req, corsAllowedOrigins);
+      }
+
+      if (req.method === "POST" && pathname === "/api/v1/auth/bootstrap-admin") {
+        const body = await readJsonBody(req);
+        const adminUsername = String(body.username ?? "admin").trim();
+        const adminEmail = String(body.email ?? "mahmoud.hindam9@gmail.com").toLowerCase().trim();
+        const adminPassword = String(body.password ?? "");
+        const adminPhone = String(body.phone ?? "").trim();
+        const fullName = String(body.fullName ?? "System Administrator").trim() || "System Administrator";
+        const mustChangePassword = body.mustChangePassword === true;
+
+        const bootRes = await engine.bootstrapInitialAdminIfNeeded({
+          adminEmail,
+          adminUsername,
+          adminPassword,
+          adminPhone
+        });
+        if (!bootRes.bootstrapped) {
+          return sendJson(
+            res,
+            409,
+            { error: "ALREADY_BOOTSTRAPPED", reason: bootRes.reason },
+            req,
+            corsAllowedOrigins
+          );
+        }
+        await engine.db.runSystemTransaction(async (tx) => {
+          await tx.query(
+            `UPDATE public.users_profile
+             SET full_name = $2, must_change_password = $3
+             WHERE id = $1`,
+            [bootRes.adminUserId, fullName, mustChangePassword]
+          );
+        });
+        const session = await engine.login(adminUsername, adminPassword);
+        return sendJson(res, 201, session, req, corsAllowedOrigins);
       }
 
       if (req.method === "POST" && pathname === "/api/v1/auth/login") {
@@ -261,6 +313,10 @@ export function createVeloTrackRequestListener({
           const deleted = await engine.deleteUserAccount(claims, targetUserId);
           return sendJson(res, 200, deleted, req, corsAllowedOrigins);
         }
+      }
+
+      if (req.method === "GET" && pathname === "/api/v1/protocols") {
+        return sendJson(res, 200, TRACCAR_PROTOCOL_PORT_MANIFEST, req, corsAllowedOrigins);
       }
 
       if (req.method === "GET" && pathname === "/api/v1/profiles") {
@@ -636,7 +692,7 @@ export async function getOrCreateVeloTrackRuntime() {
         adminPassword: initialAdminPassword,
         adminPhone: process.env.VELOTRACK_INITIAL_ADMIN_PHONE ?? ""
       });
-    } else if (initialAdminEmail || initialAdminPassword) {
+    } else if (initialAdminPassword && !initialAdminEmail) {
       throw new Error("VELOTRACK_INITIAL_ADMIN_CONFIGURATION_INCOMPLETE");
     }
 

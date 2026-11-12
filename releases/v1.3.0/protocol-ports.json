@@ -1,0 +1,1359 @@
+{
+  "traccarVersion": "6.17.0",
+  "upstreamSource": "https://github.com/traccar/traccar/blob/v6.17.0/src/main/java/org/traccar/config/ProtocolConfig.java",
+  "upstreamSourceBlobSha": "c4b8e7ad84862a19b03d690d9a1fd9c90a50dfc2",
+  "protocolCount": 268,
+  "networkListenerCount": 267,
+  "publishedTcpUdpPortRanges": [
+    "5001-5174",
+    "5176-5268"
+  ],
+  "excludedPorts": [
+    5175
+  ],
+  "entries": [
+    {
+      "protocol": "gps103",
+      "protocolClass": "Gps103Protocol",
+      "defaultPort": 5001
+    },
+    {
+      "protocol": "tk103",
+      "protocolClass": "Tk103Protocol",
+      "defaultPort": 5002
+    },
+    {
+      "protocol": "gl100",
+      "protocolClass": "Gl100Protocol",
+      "defaultPort": 5003
+    },
+    {
+      "protocol": "gl200",
+      "protocolClass": "Gl200Protocol",
+      "defaultPort": 5004
+    },
+    {
+      "protocol": "t55",
+      "protocolClass": "T55Protocol",
+      "defaultPort": 5005
+    },
+    {
+      "protocol": "xexun",
+      "protocolClass": "XexunProtocol",
+      "defaultPort": 5006
+    },
+    {
+      "protocol": "totem",
+      "protocolClass": "TotemProtocol",
+      "defaultPort": 5007
+    },
+    {
+      "protocol": "enfora",
+      "protocolClass": "EnforaProtocol",
+      "defaultPort": 5008
+    },
+    {
+      "protocol": "meiligao",
+      "protocolClass": "MeiligaoProtocol",
+      "defaultPort": 5009
+    },
+    {
+      "protocol": "trv",
+      "protocolClass": "TrvProtocol",
+      "defaultPort": 5010
+    },
+    {
+      "protocol": "suntech",
+      "protocolClass": "SuntechProtocol",
+      "defaultPort": 5011
+    },
+    {
+      "protocol": "progress",
+      "protocolClass": "ProgressProtocol",
+      "defaultPort": 5012
+    },
+    {
+      "protocol": "h02",
+      "protocolClass": "H02Protocol",
+      "defaultPort": 5013
+    },
+    {
+      "protocol": "jt600",
+      "protocolClass": "Jt600Protocol",
+      "defaultPort": 5014
+    },
+    {
+      "protocol": "jt808",
+      "protocolClass": "Jt808Protocol",
+      "defaultPort": 5015
+    },
+    {
+      "protocol": "v680",
+      "protocolClass": "V680Protocol",
+      "defaultPort": 5016
+    },
+    {
+      "protocol": "pt502",
+      "protocolClass": "Pt502Protocol",
+      "defaultPort": 5017
+    },
+    {
+      "protocol": "tr20",
+      "protocolClass": "Tr20Protocol",
+      "defaultPort": 5018
+    },
+    {
+      "protocol": "navis",
+      "protocolClass": "NavisProtocol",
+      "defaultPort": 5019
+    },
+    {
+      "protocol": "meitrack",
+      "protocolClass": "MeitrackProtocol",
+      "defaultPort": 5020
+    },
+    {
+      "protocol": "skypatrol",
+      "protocolClass": "SkypatrolProtocol",
+      "defaultPort": 5021
+    },
+    {
+      "protocol": "gt02",
+      "protocolClass": "Gt02Protocol",
+      "defaultPort": 5022
+    },
+    {
+      "protocol": "gt06",
+      "protocolClass": "Gt06Protocol",
+      "defaultPort": 5023
+    },
+    {
+      "protocol": "megastek",
+      "protocolClass": "MegastekProtocol",
+      "defaultPort": 5024
+    },
+    {
+      "protocol": "navigil",
+      "protocolClass": "NavigilProtocol",
+      "defaultPort": 5025
+    },
+    {
+      "protocol": "gpsgate",
+      "protocolClass": "GpsGateProtocol",
+      "defaultPort": 5026
+    },
+    {
+      "protocol": "teltonika",
+      "protocolClass": "TeltonikaProtocol",
+      "defaultPort": 5027
+    },
+    {
+      "protocol": "mta6",
+      "protocolClass": "Mta6Protocol",
+      "defaultPort": 5028
+    },
+    {
+      "protocol": "tzone",
+      "protocolClass": "TzoneProtocol",
+      "defaultPort": 5029
+    },
+    {
+      "protocol": "tlt2h",
+      "protocolClass": "Tlt2hProtocol",
+      "defaultPort": 5030
+    },
+    {
+      "protocol": "taip",
+      "protocolClass": "TaipProtocol",
+      "defaultPort": 5031
+    },
+    {
+      "protocol": "wondex",
+      "protocolClass": "WondexProtocol",
+      "defaultPort": 5032
+    },
+    {
+      "protocol": "cellocator",
+      "protocolClass": "CellocatorProtocol",
+      "defaultPort": 5033
+    },
+    {
+      "protocol": "galileo",
+      "protocolClass": "GalileoProtocol",
+      "defaultPort": 5034
+    },
+    {
+      "protocol": "ywt",
+      "protocolClass": "YwtProtocol",
+      "defaultPort": 5035
+    },
+    {
+      "protocol": "tk102",
+      "protocolClass": "Tk102Protocol",
+      "defaultPort": 5036
+    },
+    {
+      "protocol": "intellitrac",
+      "protocolClass": "IntellitracProtocol",
+      "defaultPort": 5037
+    },
+    {
+      "protocol": "gpsmta",
+      "protocolClass": "GpsmtaProtocol",
+      "defaultPort": 5038
+    },
+    {
+      "protocol": "wialon",
+      "protocolClass": "WialonProtocol",
+      "defaultPort": 5039
+    },
+    {
+      "protocol": "carscop",
+      "protocolClass": "CarscopProtocol",
+      "defaultPort": 5040
+    },
+    {
+      "protocol": "apel",
+      "protocolClass": "ApelProtocol",
+      "defaultPort": 5041
+    },
+    {
+      "protocol": "manpower",
+      "protocolClass": "ManPowerProtocol",
+      "defaultPort": 5042
+    },
+    {
+      "protocol": "globalsat",
+      "protocolClass": "GlobalSatProtocol",
+      "defaultPort": 5043
+    },
+    {
+      "protocol": "atrack",
+      "protocolClass": "AtrackProtocol",
+      "defaultPort": 5044
+    },
+    {
+      "protocol": "pt3000",
+      "protocolClass": "Pt3000Protocol",
+      "defaultPort": 5045
+    },
+    {
+      "protocol": "ruptela",
+      "protocolClass": "RuptelaProtocol",
+      "defaultPort": 5046
+    },
+    {
+      "protocol": "topflytech",
+      "protocolClass": "TopflytechProtocol",
+      "defaultPort": 5047
+    },
+    {
+      "protocol": "laipac",
+      "protocolClass": "LaipacProtocol",
+      "defaultPort": 5048
+    },
+    {
+      "protocol": "aplicom",
+      "protocolClass": "AplicomProtocol",
+      "defaultPort": 5049
+    },
+    {
+      "protocol": "gotop",
+      "protocolClass": "GotopProtocol",
+      "defaultPort": 5050
+    },
+    {
+      "protocol": "sanav",
+      "protocolClass": "SanavProtocol",
+      "defaultPort": 5051
+    },
+    {
+      "protocol": "gator",
+      "protocolClass": "GatorProtocol",
+      "defaultPort": 5052
+    },
+    {
+      "protocol": "noran",
+      "protocolClass": "NoranProtocol",
+      "defaultPort": 5053
+    },
+    {
+      "protocol": "m2m",
+      "protocolClass": "M2mProtocol",
+      "defaultPort": 5054
+    },
+    {
+      "protocol": "osmand",
+      "protocolClass": "OsmAndProtocol",
+      "defaultPort": 5055
+    },
+    {
+      "protocol": "easytrack",
+      "protocolClass": "EasyTrackProtocol",
+      "defaultPort": 5056
+    },
+    {
+      "protocol": "gpsmarker",
+      "protocolClass": "GpsMarkerProtocol",
+      "defaultPort": 5057
+    },
+    {
+      "protocol": "khd",
+      "protocolClass": "KhdProtocol",
+      "defaultPort": 5058
+    },
+    {
+      "protocol": "piligrim",
+      "protocolClass": "PiligrimProtocol",
+      "defaultPort": 5059
+    },
+    {
+      "protocol": "stl060",
+      "protocolClass": "Stl060Protocol",
+      "defaultPort": 5060
+    },
+    {
+      "protocol": "cartrack",
+      "protocolClass": "CarTrackProtocol",
+      "defaultPort": 5061
+    },
+    {
+      "protocol": "minifinder",
+      "protocolClass": "MiniFinderProtocol",
+      "defaultPort": 5062
+    },
+    {
+      "protocol": "haicom",
+      "protocolClass": "HaicomProtocol",
+      "defaultPort": 5063
+    },
+    {
+      "protocol": "eelink",
+      "protocolClass": "EelinkProtocol",
+      "defaultPort": 5064
+    },
+    {
+      "protocol": "box",
+      "protocolClass": "BoxProtocol",
+      "defaultPort": 5065
+    },
+    {
+      "protocol": "freedom",
+      "protocolClass": "FreedomProtocol",
+      "defaultPort": 5066
+    },
+    {
+      "protocol": "telic",
+      "protocolClass": "TelicProtocol",
+      "defaultPort": 5067
+    },
+    {
+      "protocol": "trackbox",
+      "protocolClass": "TrackboxProtocol",
+      "defaultPort": 5068
+    },
+    {
+      "protocol": "visiontek",
+      "protocolClass": "VisiontekProtocol",
+      "defaultPort": 5069
+    },
+    {
+      "protocol": "orion",
+      "protocolClass": "OrionProtocol",
+      "defaultPort": 5070
+    },
+    {
+      "protocol": "riti",
+      "protocolClass": "RitiProtocol",
+      "defaultPort": 5071
+    },
+    {
+      "protocol": "ulbotech",
+      "protocolClass": "UlbotechProtocol",
+      "defaultPort": 5072
+    },
+    {
+      "protocol": "tramigo",
+      "protocolClass": "TramigoProtocol",
+      "defaultPort": 5073
+    },
+    {
+      "protocol": "tr900",
+      "protocolClass": "Tr900Protocol",
+      "defaultPort": 5074
+    },
+    {
+      "protocol": "ardi01",
+      "protocolClass": "Ardi01Protocol",
+      "defaultPort": 5075
+    },
+    {
+      "protocol": "xt013",
+      "protocolClass": "Xt013Protocol",
+      "defaultPort": 5076
+    },
+    {
+      "protocol": "autofon",
+      "protocolClass": "AutoFonProtocol",
+      "defaultPort": 5077
+    },
+    {
+      "protocol": "gosafe",
+      "protocolClass": "GoSafeProtocol",
+      "defaultPort": 5078
+    },
+    {
+      "protocol": "tt8850",
+      "protocolClass": "Tt8850Protocol",
+      "defaultPort": 5079
+    },
+    {
+      "protocol": "bce",
+      "protocolClass": "BceProtocol",
+      "defaultPort": 5080
+    },
+    {
+      "protocol": "xirgo",
+      "protocolClass": "XirgoProtocol",
+      "defaultPort": 5081
+    },
+    {
+      "protocol": "calamp",
+      "protocolClass": "CalAmpProtocol",
+      "defaultPort": 5082
+    },
+    {
+      "protocol": "mtx",
+      "protocolClass": "MtxProtocol",
+      "defaultPort": 5083
+    },
+    {
+      "protocol": "tytan",
+      "protocolClass": "TytanProtocol",
+      "defaultPort": 5084
+    },
+    {
+      "protocol": "avl301",
+      "protocolClass": "Avl301Protocol",
+      "defaultPort": 5085
+    },
+    {
+      "protocol": "castel",
+      "protocolClass": "CastelProtocol",
+      "defaultPort": 5086
+    },
+    {
+      "protocol": "mxt",
+      "protocolClass": "MxtProtocol",
+      "defaultPort": 5087
+    },
+    {
+      "protocol": "cityeasy",
+      "protocolClass": "CityeasyProtocol",
+      "defaultPort": 5088
+    },
+    {
+      "protocol": "aquila",
+      "protocolClass": "AquilaProtocol",
+      "defaultPort": 5089
+    },
+    {
+      "protocol": "flextrack",
+      "protocolClass": "FlextrackProtocol",
+      "defaultPort": 5090
+    },
+    {
+      "protocol": "blackkite",
+      "protocolClass": "BlackKiteProtocol",
+      "defaultPort": 5091
+    },
+    {
+      "protocol": "adm",
+      "protocolClass": "AdmProtocol",
+      "defaultPort": 5092
+    },
+    {
+      "protocol": "watch",
+      "protocolClass": "WatchProtocol",
+      "defaultPort": 5093
+    },
+    {
+      "protocol": "t800x",
+      "protocolClass": "T800xProtocol",
+      "defaultPort": 5094
+    },
+    {
+      "protocol": "upro",
+      "protocolClass": "UproProtocol",
+      "defaultPort": 5095
+    },
+    {
+      "protocol": "auro",
+      "protocolClass": "AuroProtocol",
+      "defaultPort": 5096
+    },
+    {
+      "protocol": "disha",
+      "protocolClass": "DishaProtocol",
+      "defaultPort": 5097
+    },
+    {
+      "protocol": "thinkrace",
+      "protocolClass": "ThinkRaceProtocol",
+      "defaultPort": 5098
+    },
+    {
+      "protocol": "pathaway",
+      "protocolClass": "PathAwayProtocol",
+      "defaultPort": 5099
+    },
+    {
+      "protocol": "arnavi",
+      "protocolClass": "ArnaviProtocol",
+      "defaultPort": 5100
+    },
+    {
+      "protocol": "nvs",
+      "protocolClass": "NvsProtocol",
+      "defaultPort": 5101
+    },
+    {
+      "protocol": "kenji",
+      "protocolClass": "KenjiProtocol",
+      "defaultPort": 5102
+    },
+    {
+      "protocol": "astra",
+      "protocolClass": "AstraProtocol",
+      "defaultPort": 5103
+    },
+    {
+      "protocol": "homtecs",
+      "protocolClass": "HomtecsProtocol",
+      "defaultPort": 5104
+    },
+    {
+      "protocol": "fox",
+      "protocolClass": "FoxProtocol",
+      "defaultPort": 5105
+    },
+    {
+      "protocol": "gnx",
+      "protocolClass": "GnxProtocol",
+      "defaultPort": 5106
+    },
+    {
+      "protocol": "arknav",
+      "protocolClass": "ArknavProtocol",
+      "defaultPort": 5107
+    },
+    {
+      "protocol": "supermate",
+      "protocolClass": "SupermateProtocol",
+      "defaultPort": 5108
+    },
+    {
+      "protocol": "appello",
+      "protocolClass": "AppelloProtocol",
+      "defaultPort": 5109
+    },
+    {
+      "protocol": "idpl",
+      "protocolClass": "IdplProtocol",
+      "defaultPort": 5110
+    },
+    {
+      "protocol": "huasheng",
+      "protocolClass": "HuaShengProtocol",
+      "defaultPort": 5111
+    },
+    {
+      "protocol": "l100",
+      "protocolClass": "L100Protocol",
+      "defaultPort": 5112
+    },
+    {
+      "protocol": "granit",
+      "protocolClass": "GranitProtocol",
+      "defaultPort": 5113
+    },
+    {
+      "protocol": "carcell",
+      "protocolClass": "CarcellProtocol",
+      "defaultPort": 5114
+    },
+    {
+      "protocol": "obddongle",
+      "protocolClass": "ObdDongleProtocol",
+      "defaultPort": 5115
+    },
+    {
+      "protocol": "hunterpro",
+      "protocolClass": "HunterProProtocol",
+      "defaultPort": 5116
+    },
+    {
+      "protocol": "raveon",
+      "protocolClass": "RaveonProtocol",
+      "defaultPort": 5117
+    },
+    {
+      "protocol": "cradlepoint",
+      "protocolClass": "CradlepointProtocol",
+      "defaultPort": 5118
+    },
+    {
+      "protocol": "arknavx8",
+      "protocolClass": "ArknavX8Protocol",
+      "defaultPort": 5119
+    },
+    {
+      "protocol": "autograde",
+      "protocolClass": "AutoGradeProtocol",
+      "defaultPort": 5120
+    },
+    {
+      "protocol": "oigo",
+      "protocolClass": "OigoProtocol",
+      "defaultPort": 5121
+    },
+    {
+      "protocol": "jpkorjar",
+      "protocolClass": "JpKorjarProtocol",
+      "defaultPort": 5122
+    },
+    {
+      "protocol": "cguard",
+      "protocolClass": "CguardProtocol",
+      "defaultPort": 5123
+    },
+    {
+      "protocol": "fifotrack",
+      "protocolClass": "FifotrackProtocol",
+      "defaultPort": 5124
+    },
+    {
+      "protocol": "smokey",
+      "protocolClass": "SmokeyProtocol",
+      "defaultPort": 5125
+    },
+    {
+      "protocol": "extremtrac",
+      "protocolClass": "ExtremTracProtocol",
+      "defaultPort": 5126
+    },
+    {
+      "protocol": "trakmate",
+      "protocolClass": "TrakMateProtocol",
+      "defaultPort": 5127
+    },
+    {
+      "protocol": "at2000",
+      "protocolClass": "At2000Protocol",
+      "defaultPort": 5128
+    },
+    {
+      "protocol": "maestro",
+      "protocolClass": "MaestroProtocol",
+      "defaultPort": 5129
+    },
+    {
+      "protocol": "ais",
+      "protocolClass": "AisProtocol",
+      "defaultPort": 5130
+    },
+    {
+      "protocol": "gt30",
+      "protocolClass": "Gt30Protocol",
+      "defaultPort": 5131
+    },
+    {
+      "protocol": "tmg",
+      "protocolClass": "TmgProtocol",
+      "defaultPort": 5132
+    },
+    {
+      "protocol": "pretrace",
+      "protocolClass": "PretraceProtocol",
+      "defaultPort": 5133
+    },
+    {
+      "protocol": "pricol",
+      "protocolClass": "PricolProtocol",
+      "defaultPort": 5134
+    },
+    {
+      "protocol": "siwi",
+      "protocolClass": "SiwiProtocol",
+      "defaultPort": 5135
+    },
+    {
+      "protocol": "starlink",
+      "protocolClass": "StarLinkProtocol",
+      "defaultPort": 5136
+    },
+    {
+      "protocol": "dmt",
+      "protocolClass": "DmtProtocol",
+      "defaultPort": 5137
+    },
+    {
+      "protocol": "xt2400",
+      "protocolClass": "Xt2400Protocol",
+      "defaultPort": 5138
+    },
+    {
+      "protocol": "dmthttp",
+      "protocolClass": "DmtHttpProtocol",
+      "defaultPort": 5139
+    },
+    {
+      "protocol": "alematics",
+      "protocolClass": "AlematicsProtocol",
+      "defaultPort": 5140
+    },
+    {
+      "protocol": "gps056",
+      "protocolClass": "Gps056Protocol",
+      "defaultPort": 5141
+    },
+    {
+      "protocol": "flexcomm",
+      "protocolClass": "FlexCommProtocol",
+      "defaultPort": 5142
+    },
+    {
+      "protocol": "vt200",
+      "protocolClass": "Vt200Protocol",
+      "defaultPort": 5143
+    },
+    {
+      "protocol": "owntracks",
+      "protocolClass": "OwnTracksProtocol",
+      "defaultPort": 5144
+    },
+    {
+      "protocol": "vtfms",
+      "protocolClass": "VtfmsProtocol",
+      "defaultPort": 5145
+    },
+    {
+      "protocol": "tlv",
+      "protocolClass": "TlvProtocol",
+      "defaultPort": 5146
+    },
+    {
+      "protocol": "esky",
+      "protocolClass": "EskyProtocol",
+      "defaultPort": 5147
+    },
+    {
+      "protocol": "genx",
+      "protocolClass": "GenxProtocol",
+      "defaultPort": 5148
+    },
+    {
+      "protocol": "flespi",
+      "protocolClass": "FlespiProtocol",
+      "defaultPort": 5149
+    },
+    {
+      "protocol": "dway",
+      "protocolClass": "DwayProtocol",
+      "defaultPort": 5150
+    },
+    {
+      "protocol": "recoda",
+      "protocolClass": "RecodaProtocol",
+      "defaultPort": 5151
+    },
+    {
+      "protocol": "oko",
+      "protocolClass": "OkoProtocol",
+      "defaultPort": 5152
+    },
+    {
+      "protocol": "ivt401",
+      "protocolClass": "Ivt401Protocol",
+      "defaultPort": 5153
+    },
+    {
+      "protocol": "sigfox",
+      "protocolClass": "SigfoxProtocol",
+      "defaultPort": 5154
+    },
+    {
+      "protocol": "t57",
+      "protocolClass": "T57Protocol",
+      "defaultPort": 5155
+    },
+    {
+      "protocol": "spot",
+      "protocolClass": "SpotProtocol",
+      "defaultPort": 5156
+    },
+    {
+      "protocol": "m2c",
+      "protocolClass": "M2cProtocol",
+      "defaultPort": 5157
+    },
+    {
+      "protocol": "austinnb",
+      "protocolClass": "AustinNbProtocol",
+      "defaultPort": 5158
+    },
+    {
+      "protocol": "opengts",
+      "protocolClass": "OpenGtsProtocol",
+      "defaultPort": 5159
+    },
+    {
+      "protocol": "cautela",
+      "protocolClass": "CautelaProtocol",
+      "defaultPort": 5160
+    },
+    {
+      "protocol": "continental",
+      "protocolClass": "ContinentalProtocol",
+      "defaultPort": 5161
+    },
+    {
+      "protocol": "egts",
+      "protocolClass": "EgtsProtocol",
+      "defaultPort": 5162
+    },
+    {
+      "protocol": "robotrack",
+      "protocolClass": "RoboTrackProtocol",
+      "defaultPort": 5163
+    },
+    {
+      "protocol": "pt60",
+      "protocolClass": "Pt60Protocol",
+      "defaultPort": 5164
+    },
+    {
+      "protocol": "telemax",
+      "protocolClass": "TelemaxProtocol",
+      "defaultPort": 5165
+    },
+    {
+      "protocol": "sabertek",
+      "protocolClass": "SabertekProtocol",
+      "defaultPort": 5166
+    },
+    {
+      "protocol": "retranslator",
+      "protocolClass": "RetranslatorProtocol",
+      "defaultPort": 5167
+    },
+    {
+      "protocol": "svias",
+      "protocolClass": "SviasProtocol",
+      "defaultPort": 5168
+    },
+    {
+      "protocol": "eseal",
+      "protocolClass": "EsealProtocol",
+      "defaultPort": 5169
+    },
+    {
+      "protocol": "freematics",
+      "protocolClass": "FreematicsProtocol",
+      "defaultPort": 5170
+    },
+    {
+      "protocol": "avema",
+      "protocolClass": "AvemaProtocol",
+      "defaultPort": 5171
+    },
+    {
+      "protocol": "autotrack",
+      "protocolClass": "AutoTrackProtocol",
+      "defaultPort": 5172
+    },
+    {
+      "protocol": "tek",
+      "protocolClass": "TekProtocol",
+      "defaultPort": 5173
+    },
+    {
+      "protocol": "wristband",
+      "protocolClass": "WristbandProtocol",
+      "defaultPort": 5174
+    },
+    {
+      "protocol": "milesmate",
+      "protocolClass": "MilesmateProtocol",
+      "defaultPort": 5176
+    },
+    {
+      "protocol": "anytrek",
+      "protocolClass": "AnytrekProtocol",
+      "defaultPort": 5177
+    },
+    {
+      "protocol": "smartsole",
+      "protocolClass": "SmartSoleProtocol",
+      "defaultPort": 5178
+    },
+    {
+      "protocol": "its",
+      "protocolClass": "ItsProtocol",
+      "defaultPort": 5179
+    },
+    {
+      "protocol": "xrb28",
+      "protocolClass": "Xrb28Protocol",
+      "defaultPort": 5180
+    },
+    {
+      "protocol": "c2stek",
+      "protocolClass": "C2stekProtocol",
+      "defaultPort": 5181
+    },
+    {
+      "protocol": "nyitech",
+      "protocolClass": "NyitechProtocol",
+      "defaultPort": 5182
+    },
+    {
+      "protocol": "neos",
+      "protocolClass": "NeosProtocol",
+      "defaultPort": 5183
+    },
+    {
+      "protocol": "satsol",
+      "protocolClass": "SatsolProtocol",
+      "defaultPort": 5184
+    },
+    {
+      "protocol": "globalstar",
+      "protocolClass": "GlobalstarProtocol",
+      "defaultPort": 5185
+    },
+    {
+      "protocol": "sanul",
+      "protocolClass": "SanulProtocol",
+      "defaultPort": 5186
+    },
+    {
+      "protocol": "minifinder2",
+      "protocolClass": "Minifinder2Protocol",
+      "defaultPort": 5187
+    },
+    {
+      "protocol": "radar",
+      "protocolClass": "RadarProtocol",
+      "defaultPort": 5188
+    },
+    {
+      "protocol": "techtlt",
+      "protocolClass": "TechTltProtocol",
+      "defaultPort": 5189
+    },
+    {
+      "protocol": "starcom",
+      "protocolClass": "StarcomProtocol",
+      "defaultPort": 5190
+    },
+    {
+      "protocol": "mictrack",
+      "protocolClass": "MictrackProtocol",
+      "defaultPort": 5191
+    },
+    {
+      "protocol": "plugin",
+      "protocolClass": "PluginProtocol",
+      "defaultPort": 5192
+    },
+    {
+      "protocol": "leafspy",
+      "protocolClass": "LeafSpyProtocol",
+      "defaultPort": 5193
+    },
+    {
+      "protocol": "naviset",
+      "protocolClass": "NavisetProtocol",
+      "defaultPort": 5194
+    },
+    {
+      "protocol": "racedynamics",
+      "protocolClass": "RaceDynamicsProtocol",
+      "defaultPort": 5195
+    },
+    {
+      "protocol": "rst",
+      "protocolClass": "RstProtocol",
+      "defaultPort": 5196
+    },
+    {
+      "protocol": "pt215",
+      "protocolClass": "Pt215Protocol",
+      "defaultPort": 5197
+    },
+    {
+      "protocol": "pacifictrack",
+      "protocolClass": "PacificTrackProtocol",
+      "defaultPort": 5198
+    },
+    {
+      "protocol": "topin",
+      "protocolClass": "TopinProtocol",
+      "defaultPort": 5199
+    },
+    {
+      "protocol": "outsafe",
+      "protocolClass": "OutsafeProtocol",
+      "defaultPort": 5200
+    },
+    {
+      "protocol": "solarpowered",
+      "protocolClass": "SolarPoweredProtocol",
+      "defaultPort": 5201
+    },
+    {
+      "protocol": "motor",
+      "protocolClass": "MotorProtocol",
+      "defaultPort": 5202
+    },
+    {
+      "protocol": "omnicomm",
+      "protocolClass": "OmnicommProtocol",
+      "defaultPort": 5203
+    },
+    {
+      "protocol": "s168",
+      "protocolClass": "S168Protocol",
+      "defaultPort": 5204
+    },
+    {
+      "protocol": "vnet",
+      "protocolClass": "VnetProtocol",
+      "defaultPort": 5205
+    },
+    {
+      "protocol": "blue",
+      "protocolClass": "BlueProtocol",
+      "defaultPort": 5206
+    },
+    {
+      "protocol": "pst",
+      "protocolClass": "PstProtocol",
+      "defaultPort": 5207
+    },
+    {
+      "protocol": "dingtek",
+      "protocolClass": "DingtekProtocol",
+      "defaultPort": 5208
+    },
+    {
+      "protocol": "wli",
+      "protocolClass": "WliProtocol",
+      "defaultPort": 5209
+    },
+    {
+      "protocol": "niot",
+      "protocolClass": "NiotProtocol",
+      "defaultPort": 5210
+    },
+    {
+      "protocol": "portman",
+      "protocolClass": "PortmanProtocol",
+      "defaultPort": 5211
+    },
+    {
+      "protocol": "moovbox",
+      "protocolClass": "MoovboxProtocol",
+      "defaultPort": 5212
+    },
+    {
+      "protocol": "futureway",
+      "protocolClass": "FutureWayProtocol",
+      "defaultPort": 5213
+    },
+    {
+      "protocol": "polte",
+      "protocolClass": "PolteProtocol",
+      "defaultPort": 5214
+    },
+    {
+      "protocol": "net",
+      "protocolClass": "NetProtocol",
+      "defaultPort": 5215
+    },
+    {
+      "protocol": "mobilogix",
+      "protocolClass": "MobilogixProtocol",
+      "defaultPort": 5216
+    },
+    {
+      "protocol": "swiftech",
+      "protocolClass": "SwiftechProtocol",
+      "defaultPort": 5217
+    },
+    {
+      "protocol": "iotm",
+      "protocolClass": "IotmProtocol",
+      "defaultPort": 5218
+    },
+    {
+      "protocol": "dolphin",
+      "protocolClass": "DolphinProtocol",
+      "defaultPort": 5219
+    },
+    {
+      "protocol": "ennfu",
+      "protocolClass": "EnnfuProtocol",
+      "defaultPort": 5220
+    },
+    {
+      "protocol": "maxpb",
+      "protocolClass": "MaxPbProtocol",
+      "defaultPort": 5221
+    },
+    {
+      "protocol": "startek",
+      "protocolClass": "StartekProtocol",
+      "defaultPort": 5222
+    },
+    {
+      "protocol": "gs100",
+      "protocolClass": "Gs100Protocol",
+      "defaultPort": 5223
+    },
+    {
+      "protocol": "mavlink2",
+      "protocolClass": "Mavlink2Protocol",
+      "defaultPort": 5224
+    },
+    {
+      "protocol": "uux",
+      "protocolClass": "UuxProtocol",
+      "defaultPort": 5225
+    },
+    {
+      "protocol": "r12w",
+      "protocolClass": "R12wProtocol",
+      "defaultPort": 5226
+    },
+    {
+      "protocol": "flexiblereport",
+      "protocolClass": "FlexibleReportProtocol",
+      "defaultPort": 5227
+    },
+    {
+      "protocol": "thinkpower",
+      "protocolClass": "ThinkPowerProtocol",
+      "defaultPort": 5228
+    },
+    {
+      "protocol": "stb",
+      "protocolClass": "StbProtocol",
+      "defaultPort": 5229
+    },
+    {
+      "protocol": "b2316",
+      "protocolClass": "B2316Protocol",
+      "defaultPort": 5230
+    },
+    {
+      "protocol": "hoopo",
+      "protocolClass": "HoopoProtocol",
+      "defaultPort": 5231
+    },
+    {
+      "protocol": "dualcam",
+      "protocolClass": "DualcamProtocol",
+      "defaultPort": 5232
+    },
+    {
+      "protocol": "xexun2",
+      "protocolClass": "Xexun2Protocol",
+      "defaultPort": 5233
+    },
+    {
+      "protocol": "techtocruz",
+      "protocolClass": "TechtoCruzProtocol",
+      "defaultPort": 5234
+    },
+    {
+      "protocol": "flexapi",
+      "protocolClass": "FlexApiProtocol",
+      "defaultPort": 5235
+    },
+    {
+      "protocol": "dsf22",
+      "protocolClass": "Dsf22Protocol",
+      "defaultPort": 5236
+    },
+    {
+      "protocol": "jido",
+      "protocolClass": "JidoProtocol",
+      "defaultPort": 5237
+    },
+    {
+      "protocol": "armoli",
+      "protocolClass": "ArmoliProtocol",
+      "defaultPort": 5238
+    },
+    {
+      "protocol": "teratrack",
+      "protocolClass": "TeraTrackProtocol",
+      "defaultPort": 5239
+    },
+    {
+      "protocol": "envotech",
+      "protocolClass": "EnvotechProtocol",
+      "defaultPort": 5240
+    },
+    {
+      "protocol": "bstpl",
+      "protocolClass": "BstplProtocol",
+      "defaultPort": 5241
+    },
+    {
+      "protocol": "thuraya",
+      "protocolClass": "ThurayaProtocol",
+      "defaultPort": 5242
+    },
+    {
+      "protocol": "ndtpv6",
+      "protocolClass": "NdtpV6Protocol",
+      "defaultPort": 5243
+    },
+    {
+      "protocol": "g1rus",
+      "protocolClass": "G1rusProtocol",
+      "defaultPort": 5244
+    },
+    {
+      "protocol": "rftrack",
+      "protocolClass": "RfTrackProtocol",
+      "defaultPort": 5245
+    },
+    {
+      "protocol": "vlt",
+      "protocolClass": "VltProtocol",
+      "defaultPort": 5246
+    },
+    {
+      "protocol": "transync",
+      "protocolClass": "TranSyncProtocol",
+      "defaultPort": 5247
+    },
+    {
+      "protocol": "t622iridium",
+      "protocolClass": "T622IridiumProtocol",
+      "defaultPort": 5248
+    },
+    {
+      "protocol": "pui",
+      "protocolClass": "PuiProtocol",
+      "defaultPort": 5249
+    },
+    {
+      "protocol": "nto",
+      "protocolClass": "NtoProtocol",
+      "defaultPort": 5250
+    },
+    {
+      "protocol": "ramac",
+      "protocolClass": "RamacProtocol",
+      "defaultPort": 5251
+    },
+    {
+      "protocol": "positrex",
+      "protocolClass": "PositrexProtocol",
+      "defaultPort": 5252
+    },
+    {
+      "protocol": "dragino",
+      "protocolClass": "DraginoProtocol",
+      "defaultPort": 5253
+    },
+    {
+      "protocol": "fleetguide",
+      "protocolClass": "FleetGuideProtocol",
+      "defaultPort": 5254
+    },
+    {
+      "protocol": "valtrack",
+      "protocolClass": "ValtrackProtocol",
+      "defaultPort": 5255
+    },
+    {
+      "protocol": "snapper",
+      "protocolClass": "SnapperProtocol",
+      "defaultPort": 5256
+    },
+    {
+      "protocol": "gl601",
+      "protocolClass": "Gl601Protocol",
+      "defaultPort": 5257
+    },
+    {
+      "protocol": "hyn600",
+      "protocolClass": "Hyn600Protocol",
+      "defaultPort": 5258
+    },
+    {
+      "protocol": "jmak",
+      "protocolClass": "JmakProtocol",
+      "defaultPort": 5259
+    },
+    {
+      "protocol": "bws",
+      "protocolClass": "BwsProtocol",
+      "defaultPort": 5260
+    },
+    {
+      "protocol": "ttnhttp",
+      "protocolClass": "TtnHttpProtocol",
+      "defaultPort": 5261
+    },
+    {
+      "protocol": "smartcar",
+      "protocolClass": "SmartcarProtocol",
+      "defaultPort": 5262
+    },
+    {
+      "protocol": "jt1078",
+      "protocolClass": "Jt1078Protocol",
+      "defaultPort": 5263
+    },
+    {
+      "protocol": "xexun3",
+      "protocolClass": "Xexun3Protocol",
+      "defaultPort": 5264
+    },
+    {
+      "protocol": "radshid",
+      "protocolClass": "RadshidProtocol",
+      "defaultPort": 5265
+    },
+    {
+      "protocol": "r16h",
+      "protocolClass": "R16hProtocol",
+      "defaultPort": 5266
+    },
+    {
+      "protocol": "jimiphoto",
+      "protocolClass": "JimiPhotoProtocol",
+      "defaultPort": 5267
+    },
+    {
+      "protocol": "teltonikairidium",
+      "protocolClass": "TeltonikaIridiumProtocol",
+      "defaultPort": 5268
+    }
+  ],
+  "nonNetworkProtocols": [
+    {
+      "protocol": "orbcomm",
+      "protocolClass": "OrbcommProtocol",
+      "defaultPort": 0,
+      "note": "Port 0: no default inbound socket listener in ProtocolConfig."
+    }
+  ]
+}

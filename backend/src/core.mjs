@@ -113,9 +113,60 @@ export const OFFICIAL_TRACCAR_COMMANDS = {
 export const PROTOCOL_SUPPORTED_COMMANDS = {
   gt06: ["positionSingle", "engineStop", "engineResume", "rebootDevice", "setTimezone", "custom"],
   teltonika: ["positionSingle", "outputControl", "rebootDevice", "custom"],
+  gl200: ["positionSingle", "engineStop", "engineResume", "rebootDevice", "custom"],
+  osmand: ["positionSingle", "custom"],
   coban: ["positionSingle", "engineStop", "engineResume", "custom"],
+  gps103: ["positionSingle", "engineStop", "engineResume", "custom"],
   tk103: ["positionSingle", "engineStop", "engineResume", "custom"]
 };
+
+function loadTraccarProtocolPortManifest() {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(currentDir, "../../deployment/traccar/protocol-ports.json"),
+    path.resolve(currentDir, "../protocol-ports.json")
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return JSON.parse(fs.readFileSync(candidate, "utf8"));
+    }
+  }
+  throw new Error("TRACCAR_PROTOCOL_PORT_MANIFEST_MISSING");
+}
+
+export const TRACCAR_PROTOCOL_PORT_MANIFEST = loadTraccarProtocolPortManifest();
+
+export const TRACCAR_PROTOCOL_DEFAULT_PORTS = new Map([
+  ...TRACCAR_PROTOCOL_PORT_MANIFEST.entries.map((entry) => [
+    String(entry.protocol).toLowerCase(),
+    Number(entry.defaultPort)
+  ]),
+  // Backward-compatible alias for Coban GPS103 family
+  ["coban", 5001]
+]);
+
+export function resolveTraccarProtocolPort(protocol, explicitPort = null) {
+  const cleanProtocol = String(protocol ?? "gt06").toLowerCase().trim();
+  if (cleanProtocol === "orbcomm") {
+    throw new Error("TRACCAR_PROTOCOL_ORBCOMM_NO_INBOUND_LISTENER");
+  }
+  const defaultPort = TRACCAR_PROTOCOL_DEFAULT_PORTS.get(cleanProtocol);
+  if (!defaultPort) {
+    throw new Error(`UNSUPPORTED_TRACCAR_PROTOCOL:${cleanProtocol}`);
+  }
+  if (explicitPort !== undefined && explicitPort !== null && explicitPort !== "") {
+    const portNum = Number(explicitPort);
+    if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+      throw new Error("INVALID_TRACCAR_PORT");
+    }
+    if (portNum === 5175) {
+      throw new Error("TRACCAR_PORT_5175_UNASSIGNED");
+    }
+    return portNum;
+  }
+  return defaultPort;
+}
+
 
 export function computeExpiryMillis(startedAtMs, planDuration) {
   if (!(planDuration in PLAN_DURATION_DAYS)) {
@@ -1549,10 +1600,8 @@ export class VeloTrackEngine {
   }
 
   /**
-   * Ensures that the primary administrator account (`admin` / `Admin@123456` by default)
-   * exists, is active, and has the expected credentials.
+   * Backward-compatible one-shot bootstrap alias. Never resets an existing admin password.
    */
-  // Backward-compatible alias. Bootstrap is one-shot and never resets an existing admin password.
   async ensureAdminCredentials(options = {}) {
     return this.bootstrapInitialAdminIfNeeded(options);
   }
@@ -2126,6 +2175,7 @@ export class VeloTrackEngine {
       throw new Error("INVALID_PROFILE_COMMAND_POLICY");
     }
     const protocol = String(input.traccarProtocol ?? "gt06").toLowerCase().trim();
+    const serverPort = resolveTraccarProtocolPort(protocol, input.serverPort);
     const defaultCommands =
       PROTOCOL_SUPPORTED_COMMANDS[protocol] ?? ["positionSingle", "engineStop", "engineResume", "custom"];
     const supportedCommands = Array.isArray(input.supportedCommands)
@@ -2150,7 +2200,7 @@ export class VeloTrackEngine {
           String(input.firmwareVersion ?? "").trim(),
           protocol,
           String(input.serverHost ?? "").trim(),
-          Number(input.serverPort ?? 5023),
+          serverPort,
           input.transport ?? "TCP",
           input.serverMode ?? "DOMAIN",
           Boolean(input.requiresDevicePassword),

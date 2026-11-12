@@ -60,6 +60,7 @@ import org.maplibre.android.maps.MapView
 fun VeloTrackMapLibreCanvas(
     devices: List<DeviceAggregate>,
     selectedDeviceId: String?,
+    userLocation: Pair<Double, Double>? = null,
     routeWaypoints: List<CachedWaypointEntity>,
     activeWaypointIndex: Int,
     isDarkTheme: Boolean,
@@ -85,21 +86,24 @@ fun VeloTrackMapLibreCanvas(
         }
     }
 
-    val minLat = remember(positionedDevices, routeWaypoints) {
-        val lats = positionedDevices.mapNotNull { it.device.lastLat } + routeWaypoints.map { it.latitude }
-        (lats.minOrNull() ?: 29.95) - 0.02
+    val allLats = remember(positionedDevices, routeWaypoints, userLocation) {
+        positionedDevices.mapNotNull { it.device.lastLat } +
+            routeWaypoints.map { it.latitude } +
+            listOfNotNull(userLocation?.first)
     }
-    val maxLat = remember(positionedDevices, routeWaypoints) {
-        val lats = positionedDevices.mapNotNull { it.device.lastLat } + routeWaypoints.map { it.latitude }
-        (lats.maxOrNull() ?: 30.15) + 0.02
+    val allLngs = remember(positionedDevices, routeWaypoints, userLocation) {
+        positionedDevices.mapNotNull { it.device.lastLng } +
+            routeWaypoints.map { it.longitude } +
+            listOfNotNull(userLocation?.second)
     }
-    val minLng = remember(positionedDevices, routeWaypoints) {
-        val lngs = positionedDevices.mapNotNull { it.device.lastLng } + routeWaypoints.map { it.longitude }
-        (lngs.minOrNull() ?: 31.15) - 0.02
-    }
-    val maxLng = remember(positionedDevices, routeWaypoints) {
-        val lngs = positionedDevices.mapNotNull { it.device.lastLng } + routeWaypoints.map { it.longitude }
-        (lngs.maxOrNull() ?: 31.35) + 0.02
+
+    val minLat = (allLats.minOrNull() ?: 29.95) - 0.02
+    val maxLat = (allLats.maxOrNull() ?: 30.15) + 0.02
+    val minLng = (allLngs.minOrNull() ?: 31.15) - 0.02
+    val maxLng = (allLngs.maxOrNull() ?: 31.35) + 0.02
+
+    val selectedAggregate = remember(positionedDevices, selectedDeviceId) {
+        positionedDevices.find { it.device.id == selectedDeviceId } ?: positionedDevices.firstOrNull()
     }
 
     Box(
@@ -125,20 +129,50 @@ fun VeloTrackMapLibreCanvas(
                         mapView.apply {
                             getMapAsync { map ->
                                 val bgHex = if (isDarkTheme) "#080D16" else "#EAF1F8"
-                                val pmtilesStyleJson = """
+                                val tileUrl = if (isDarkTheme) {
+                                    "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+                                } else {
+                                    "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+                                }
+                                val mapStyleJson = """
                                     {
                                       "version": 8,
-                                      "name": "VeloTrack PMTiles",
+                                      "name": "VeloTrack Map",
+                                      "sources": {
+                                        "raster-tiles": {
+                                          "type": "raster",
+                                          "tiles": [
+                                            "$tileUrl"
+                                          ],
+                                          "tileSize": 256,
+                                          "attribution": "© OpenStreetMap contributors"
+                                        }
+                                      },
                                       "layers": [
                                         {
                                           "id": "background",
                                           "type": "background",
                                           "paint": { "background-color": "$bgHex" }
+                                        },
+                                        {
+                                          "id": "osm-tiles-layer",
+                                          "type": "raster",
+                                          "source": "raster-tiles",
+                                          "minzoom": 0,
+                                          "maxzoom": 19
                                         }
                                       ]
                                     }
                                 """.trimIndent()
-                                map.setStyle(org.maplibre.android.maps.Style.Builder().fromJson(pmtilesStyleJson))
+                                map.setStyle(org.maplibre.android.maps.Style.Builder().fromJson(mapStyleJson)) {
+                                    val targetLat = selectedAggregate?.device?.lastLat ?: userLocation?.first ?: 30.0444
+                                    val targetLng = selectedAggregate?.device?.lastLng ?: userLocation?.second ?: 31.2357
+                                    val zoomLevel = if (selectedAggregate?.device?.lastLat != null || userLocation != null) 13.0 else 10.0
+                                    map.cameraPosition = org.maplibre.android.camera.CameraPosition.Builder()
+                                        .target(org.maplibre.android.geometry.LatLng(targetLat, targetLng))
+                                        .zoom(zoomLevel)
+                                        .build()
+                                }
                                 map.uiSettings.isAttributionEnabled = false
                                 map.uiSettings.isLogoEnabled = false
                             }
@@ -214,6 +248,27 @@ fun VeloTrackMapLibreCanvas(
                         center = Offset(px, py)
                     )
                 }
+            }
+
+            // Draw current device user location marker if present
+            userLocation?.let { (uLat, uLng) ->
+                val px = ((uLng - minLng) / lngSpan).toFloat().coerceIn(0.05f, 0.95f) * w
+                val py = (1f - ((uLat - minLat) / latSpan).toFloat().coerceIn(0.08f, 0.92f)) * h
+                drawCircle(
+                    color = Color(0xFF2196F3).copy(alpha = 0.25f),
+                    radius = 22.dp.toPx(),
+                    center = Offset(px, py)
+                )
+                drawCircle(
+                    color = Color.White,
+                    radius = 8.dp.toPx(),
+                    center = Offset(px, py)
+                )
+                drawCircle(
+                    color = Color(0xFF1976D2),
+                    radius = 6.dp.toPx(),
+                    center = Offset(px, py)
+                )
             }
 
             // Only draw markers for devices with real server-confirmed coordinates

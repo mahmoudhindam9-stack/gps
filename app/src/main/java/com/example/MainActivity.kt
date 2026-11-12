@@ -1,10 +1,17 @@
 package com.example
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -33,12 +40,14 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,13 +58,17 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -110,11 +123,70 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
     val visibleDevices by viewModel.visibleDevices.collectAsStateWithLifecycle()
     val filteredDevices by viewModel.filteredDevices.collectAsStateWithLifecycle()
     val allUsers by viewModel.allUsers.collectAsStateWithLifecycle()
+    val hasAdminAccount by viewModel.hasAdminAccount.collectAsStateWithLifecycle()
     val deviceProfiles by viewModel.deviceProfiles.collectAsStateWithLifecycle()
     val activationForm by viewModel.activationForm.collectAsStateWithLifecycle()
     val routePlayback by viewModel.routePlayback.collectAsStateWithLifecycle()
     val fleetIntelligence by viewModel.fleetIntelligence.collectAsStateWithLifecycle()
     val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+    var hasLocationPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var userLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+
+    fun refreshUserLocation() {
+        if (!hasLocationPermission) return
+        try {
+            val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            if (locationManager != null) {
+                val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+                var bestLocation: Location? = null
+                for (provider in providers) {
+                    if (locationManager.isProviderEnabled(provider)) {
+                        val loc = locationManager.getLastKnownLocation(provider)
+                        if (loc != null && (bestLocation == null || loc.time > bestLocation.time)) {
+                            bestLocation = loc
+                        }
+                    }
+                }
+                if (bestLocation != null) {
+                    userLocation = Pair(bestLocation.latitude, bestLocation.longitude)
+                }
+            }
+        } catch (_: SecurityException) {
+        }
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                      permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        hasLocationPermission = granted
+        if (granted) {
+            refreshUserLocation()
+        }
+    }
+
+    LaunchedEffect(currentTab, hasLocationPermission) {
+        if (currentTab == AppTab.MAP) {
+            if (!hasLocationPermission) {
+                locationPermissionLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION
+                    )
+                )
+            } else {
+                refreshUserLocation()
+            }
+        }
+    }
 
     if (session != null && session?.mustChangePassword == false && currentTab != AppTab.MAP) {
         BackHandler {
@@ -226,6 +298,20 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
                         AppTab.MAP -> LiveFleetMapScreen(
                             devices = filteredDevices,
                             selectedDeviceId = selectedDeviceId,
+                            userLocation = userLocation,
+                            hasLocationPermission = hasLocationPermission,
+                            onRequestLocationPermission = {
+                                if (!hasLocationPermission) {
+                                    locationPermissionLauncher.launch(
+                                        arrayOf(
+                                            Manifest.permission.ACCESS_FINE_LOCATION,
+                                            Manifest.permission.ACCESS_COARSE_LOCATION
+                                        )
+                                    )
+                                } else {
+                                    refreshUserLocation()
+                                }
+                            },
                             activeFilter = fleetFilter,
                             activeRole = activeRole,
                             routePlayback = routePlayback,
@@ -252,6 +338,16 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
                             onSendActivationSms = { devId -> viewModel.sendActivationSms(devId) },
                             onAdminOverride = { devId, reason ->
                                 viewModel.triggerAdminOverride(devId, reason)
+                            },
+                            onCreateAccount = { fullName, username, phone, email, password, role ->
+                                viewModel.createAccountInSupabase(
+                                    fullName = fullName,
+                                    username = username,
+                                    phone = phone,
+                                    email = email,
+                                    password = password,
+                                    role = role
+                                )
                             }
                         )
 
@@ -273,6 +369,16 @@ fun VeloTrackAppShell(viewModel: VeloTrackViewModel) {
                             },
                             onSendCommand = { devId, cmdType ->
                                 viewModel.sendDeviceCommand(devId, cmdType)
+                            },
+                            onCreateAccount = { fullName, username, phone, email, password, role ->
+                                viewModel.createAccountInSupabase(
+                                    fullName = fullName,
+                                    username = username,
+                                    phone = phone,
+                                    email = email,
+                                    password = password,
+                                    role = role
+                                )
                             }
                         )
 
@@ -338,7 +444,7 @@ private fun VeloTrackLoginScreen(
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -352,11 +458,12 @@ private fun VeloTrackLoginScreen(
                     )
                     StatusPill(
                         text = serverStatus.connectionState.shortLabel,
-                        color = when (serverStatus.connectionState) {
-                            BackendConnectionState.CONNECTED -> StatusMovingEmerald
-                            BackendConnectionState.CONNECTING, BackendConnectionState.RECONNECTING -> StatusWaitingAmber
-                            BackendConnectionState.UNAUTHORIZED -> StatusExpiredCrimson
-                            BackendConnectionState.DISCONNECTED -> StatusOfflineSlate
+                        color = when {
+                            serverStatus.connectionState == BackendConnectionState.CONNECTED -> StatusMovingEmerald
+                            serverStatus.connectionState == BackendConnectionState.CONNECTING ||
+                                serverStatus.connectionState == BackendConnectionState.RECONNECTING -> StatusWaitingAmber
+                            serverStatus.connectionState == BackendConnectionState.UNAUTHORIZED -> StatusExpiredCrimson
+                            else -> StatusOfflineSlate
                         }
                     )
                 }

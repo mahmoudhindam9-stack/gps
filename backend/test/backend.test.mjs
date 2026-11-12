@@ -55,19 +55,47 @@ test("1. One-time initial admin bootstrap (username `admin`), mandatory 1st-logi
 
     // Perform one-time initial administrator bootstrap
     const bootRes1 = await engine1.bootstrapInitialAdminIfNeeded({
-      adminEmail: "owner.admin@velotrack.local",
+      adminEmail: "mahmoud.hindam9@gmail.com",
       adminUsername: "admin",
       adminPassword: "Admin@123456"
     });
     assert.equal(bootRes1.bootstrapped, true);
     assert.equal(bootRes1.username, "admin");
+    assert.equal(bootRes1.email, "mahmoud.hindam9@gmail.com");
     assert.equal(bootRes1.mustChangePassword, true);
 
-    // Login using username `admin` and temporary password `Admin@123456`
+    // Verify DB records: auth.users, users_profile, and bootstrap_state
+    await db1.runSystemTransaction(async (tx) => {
+      const authRows = await tx.query(`SELECT id, email FROM auth.users WHERE id = $1`, [bootRes1.adminUserId]);
+      assert.equal(authRows.rows.length, 1);
+      assert.equal(authRows.rows[0].email, "mahmoud.hindam9@gmail.com");
+
+      const profileRows = await tx.query(
+        `SELECT id, username, email, role, is_active, must_change_password FROM public.users_profile WHERE id = $1`,
+        [bootRes1.adminUserId]
+      );
+      assert.equal(profileRows.rows.length, 1);
+      assert.equal(profileRows.rows[0].id, authRows.rows[0].id);
+      assert.equal(profileRows.rows[0].username, "admin");
+      assert.equal(profileRows.rows[0].email, "mahmoud.hindam9@gmail.com");
+      assert.equal(profileRows.rows[0].role, "ADMIN");
+      assert.equal(profileRows.rows[0].is_active, true);
+      assert.equal(profileRows.rows[0].must_change_password, true);
+
+      const stateRows = await tx.query(`SELECT admin_bootstrapped, admin_user_id FROM public.bootstrap_state WHERE id = 1`);
+      assert.equal(stateRows.rows[0].admin_bootstrapped, true);
+      assert.equal(stateRows.rows[0].admin_user_id, bootRes1.adminUserId);
+    });
+
+    // Login using username `admin` and email `mahmoud.hindam9@gmail.com`
     const firstLogin = await engine1.login("admin", "Admin@123456");
     assert.equal(firstLogin.mustChangePassword, true);
     assert.equal(firstLogin.user.username, "admin");
+    assert.equal(firstLogin.user.email, "mahmoud.hindam9@gmail.com");
     assert.equal(firstLogin.user.role, "ADMIN");
+
+    const emailLogin = await engine1.login("mahmoud.hindam9@gmail.com", "Admin@123456");
+    assert.equal(emailLogin.user.id, firstLogin.user.id);
 
     const claims = auth1.verifyToken(firstLogin.token);
 
@@ -86,7 +114,7 @@ test("1. One-time initial admin bootstrap (username `admin`), mandatory 1st-logi
 
     // A backend restart must never reset an existing administrator's password.
     const ensureAfterPasswordChange = await engine1.ensureAdminCredentials({
-      adminEmail: "owner.admin@velotrack.local",
+      adminEmail: "mahmoud.hindam9@gmail.com",
       adminUsername: "admin",
       adminPassword: "Admin@123456"
     });
@@ -100,7 +128,7 @@ test("1. One-time initial admin bootstrap (username `admin`), mandatory 1st-logi
       /INVALID_CREDENTIALS/
     );
 
-    // Create a persistent profile before shutting down Boot #1
+    // Create persistent profiles before shutting down Boot #1 (GT06 + Teltonika default port resolution)
     const updatedClaims = auth1.verifyToken(changed.token);
     const createdProfile = await engine1.registerDeviceProfile(updatedClaims, {
       manufacturer: "Concox",
@@ -111,6 +139,44 @@ test("1. One-time initial admin bootstrap (username `admin`), mandatory 1st-logi
       serverCommandTemplate: "SERVER,1,gps.velotrack.local,5023,0#"
     });
     assert.equal(createdProfile.isVerified, false);
+    assert.equal(createdProfile.serverPort, 5023);
+
+    const teltonikaProfile = await engine1.registerDeviceProfile(updatedClaims, {
+      manufacturer: "Teltonika",
+      model: "FMB920",
+      firmwareVersion: "03.27",
+      traccarProtocol: "teltonika",
+      serverHost: "gps.velotrack.local",
+      serverCommandTemplate: "setparam 2004:gps.velotrack.local;2005:5027"
+    });
+    assert.equal(teltonikaProfile.serverPort, 5027);
+
+    // Orbcomm (port 0) and unassigned port 5175 must be rejected
+    await assert.rejects(
+      () =>
+        engine1.registerDeviceProfile(updatedClaims, {
+          manufacturer: "Orbcomm",
+          model: "ST6100",
+          firmwareVersion: "1.0",
+          traccarProtocol: "orbcomm",
+          serverHost: "gps.velotrack.local",
+          serverCommandTemplate: "SET SERVER"
+        }),
+      /TRACCAR_PROTOCOL_ORBCOMM_NO_INBOUND_LISTENER/
+    );
+    await assert.rejects(
+      () =>
+        engine1.registerDeviceProfile(updatedClaims, {
+          manufacturer: "Concox",
+          model: "GT06N",
+          firmwareVersion: "V1.1",
+          traccarProtocol: "gt06",
+          serverHost: "gps.velotrack.local",
+          serverPort: 5175,
+          serverCommandTemplate: "SERVER,1,gps.velotrack.local,5175,0#"
+        }),
+      /TRACCAR_PORT_5175_UNASSIGNED/
+    );
 
     await db1.close();
 
@@ -132,7 +198,7 @@ test("1. One-time initial admin bootstrap (username `admin`), mandatory 1st-logi
 
     // Bootstrap must be disabled and must NOT reset the admin password back to Admin@123456
     const bootRes2 = await engine2.bootstrapInitialAdminIfNeeded({
-      adminEmail: "owner.admin@velotrack.local",
+      adminEmail: "mahmoud.hindam9@gmail.com",
       adminUsername: "admin",
       adminPassword: "Admin@123456"
     });
@@ -150,8 +216,9 @@ test("1. One-time initial admin bootstrap (username `admin`), mandatory 1st-logi
     const profilesAfterRestart = await engine2.listDeviceProfiles(
       auth2.verifyToken(restartLogin.token)
     );
-    assert.equal(profilesAfterRestart.length, 1);
+    assert.equal(profilesAfterRestart.length, 2);
     assert.equal(profilesAfterRestart[0].id, createdProfile.id);
+    assert.equal(profilesAfterRestart[1].id, teltonikaProfile.id);
 
     await db2.close();
   } finally {
